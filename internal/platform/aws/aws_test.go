@@ -993,9 +993,9 @@ func TestAWSMetrics_PeersManagedGauge(t *testing.T) {
 	}
 	p := newTestPlatform(mock)
 	nodes := []platform.RouterNode{
-		{Name: "node-a", PrivateIP: "10.0.1.10", AZ: "us-east-1a", ProviderID: "aws:///us-east-1a/i-a"},
-		{Name: "node-b", PrivateIP: "10.0.2.10", AZ: "us-east-1b", ProviderID: "aws:///us-east-1b/i-b"},
-		{Name: "node-c", PrivateIP: "10.0.3.10", AZ: "us-east-1c", ProviderID: "aws:///us-east-1c/i-c"},
+		{Name: "node-a", PrivateIP: "10.0.1.10", Zone: "us-east-1a", ProviderID: "aws:///us-east-1a/i-a"},
+		{Name: "node-b", PrivateIP: "10.0.2.10", Zone: "us-east-1b", ProviderID: "aws:///us-east-1b/i-b"},
+		{Name: "node-c", PrivateIP: "10.0.3.10", Zone: "us-east-1c", ProviderID: "aws:///us-east-1c/i-c"},
 	}
 	if err := p.reconcileRouteServerPeers(context.Background(), nodes); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1019,7 +1019,7 @@ func TestAWSMetrics_PeerErrorIncrements(t *testing.T) {
 		clusterID:     "test-cluster",
 	}
 	if err := p.reconcileRouteServerPeers(context.Background(), []platform.RouterNode{
-		{Name: "node-a", PrivateIP: "10.0.1.10", AZ: "us-east-1a"},
+		{Name: "node-a", PrivateIP: "10.0.1.10", Zone: "us-east-1a"},
 	}); err == nil {
 		t.Fatal("expected error")
 	}
