@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkingv1alpha1 "github.com/openshift/bgp-cloud-connector/api/v1alpha1"
+	networkingapi "github.com/openshift/bgp-cloud-connector/api/v1beta1"
 )
 
 // CUDNValidationError is returned when the Kubernetes API server rejects a CUDN
@@ -47,19 +47,19 @@ func ValidateNamespaceLabels(ctx context.Context, c client.Client, networkName s
 	nsList := &corev1.NamespaceList{}
 	if err := c.List(ctx, nsList, client.MatchingLabels{
 		LabelPrimaryUDN: "",
-		LabelCUDN:       networkName,
+		LabelClusterUDN: networkName,
 	}); err != nil {
 		return err
 	}
 	if len(nsList.Items) == 0 {
-		return fmt.Errorf("no namespace found with labels %s=\"\" and %s=%q; create and label a namespace before applying CUDNBgpRouting",
-			LabelPrimaryUDN, LabelCUDN, networkName)
+		return fmt.Errorf("no namespace found with labels %s=\"\" and %s=%q; create and label a namespace before applying BGPRouting",
+			LabelPrimaryUDN, LabelClusterUDN, networkName)
 	}
 	return nil
 }
 
-func EnsureCUDN(ctx context.Context, c client.Client, routing *networkingv1alpha1.CUDNBgpRouting) error {
-	name := CUDNNamePrefix + routing.Spec.Network.Name
+func EnsureClusterUDN(ctx context.Context, c client.Client, routing *networkingapi.BGPRouting) error {
+	name := ClusterUDNNamePrefix + routing.Spec.Network.Name
 
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -75,7 +75,7 @@ func EnsureCUDN(ctx context.Context, c client.Client, routing *networkingv1alpha
 			"spec": map[string]interface{}{
 				"namespaceSelector": map[string]interface{}{
 					"matchLabels": map[string]interface{}{
-						LabelCUDN: routing.Spec.Network.Name,
+						LabelClusterUDN: routing.Spec.Network.Name,
 					},
 				},
 				"network": map[string]interface{}{
@@ -103,10 +103,10 @@ func createOrUpdateCUDN(ctx context.Context, c client.Client, obj *unstructured.
 	return err
 }
 
-func DeleteCUDN(ctx context.Context, c client.Client, networkName string) error {
+func DeleteClusterUDN(ctx context.Context, c client.Client, networkName string) error {
 	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(CUDNNetworkGVK)
-	obj.SetName(CUDNNamePrefix + networkName)
+	obj.SetGroupVersionKind(ClusterUDNGVK)
+	obj.SetName(ClusterUDNNamePrefix + networkName)
 
 	if err := c.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
 		return err

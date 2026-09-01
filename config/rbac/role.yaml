@@ -67,8 +67,8 @@ rules:
 - apiGroups:
   - networking.openshift.io
   resources:
-  - cudnbgpconfigs
-  - cudnbgproutings
+  - bgpcloudconfigurations
+  - bgproutings
   verbs:
   - create
   - delete
@@ -80,15 +80,15 @@ rules:
 - apiGroups:
   - networking.openshift.io
   resources:
-  - cudnbgpconfigs/finalizers
-  - cudnbgproutings/finalizers
+  - bgpcloudconfigurations/finalizers
+  - bgproutings/finalizers
   verbs:
   - update
 - apiGroups:
   - networking.openshift.io
   resources:
-  - cudnbgpconfigs/status
-  - cudnbgproutings/status
+  - bgpcloudconfigurations/status
+  - bgproutings/status
   verbs:
   - get
   - patch

@@ -34,28 +34,28 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkingv1alpha1 "github.com/openshift/bgp-cloud-connector/api/v1alpha1"
+	networkingapi "github.com/openshift/bgp-cloud-connector/api/v1beta1"
 )
 
 func routingTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
-	_ = networkingv1alpha1.AddToScheme(s)
+	_ = networkingapi.AddToScheme(s)
 
-	s.AddKnownTypeWithName(CUDNNetworkGVK.GroupVersion().WithKind("ClusterUserDefinedNetwork"), &unstructured.Unstructured{})
-	s.AddKnownTypeWithName(CUDNNetworkGVK.GroupVersion().WithKind("ClusterUserDefinedNetworkList"), &unstructured.UnstructuredList{})
+	s.AddKnownTypeWithName(ClusterUDNGVK.GroupVersion().WithKind("ClusterUserDefinedNetwork"), &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(ClusterUDNGVK.GroupVersion().WithKind("ClusterUserDefinedNetworkList"), &unstructured.UnstructuredList{})
 	s.AddKnownTypeWithName(RouteAdvertisementsGVK.GroupVersion().WithKind("RouteAdvertisements"), &unstructured.Unstructured{})
 	s.AddKnownTypeWithName(RouteAdvertisementsGVK.GroupVersion().WithKind("RouteAdvertisementsList"), &unstructured.UnstructuredList{})
 	return s
 }
 
-func newTestCUDNBgpRouting() *networkingv1alpha1.CUDNBgpRouting {
-	return &networkingv1alpha1.CUDNBgpRouting{
+func newTestBGPRouting() *networkingapi.BGPRouting {
+	return &networkingapi.BGPRouting{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "prod",
 		},
-		Spec: networkingv1alpha1.CUDNBgpRoutingSpec{
-			Network: networkingv1alpha1.NetworkConfig{
+		Spec: networkingapi.BGPRoutingSpec{
+			Network: networkingapi.NetworkConfig{
 				Name:    "prod",
 				Subnets: []string{"10.100.0.0/16"},
 			},
@@ -63,38 +63,38 @@ func newTestCUDNBgpRouting() *networkingv1alpha1.CUDNBgpRouting {
 	}
 }
 
-func newReadyCUDNBgpConfig() *networkingv1alpha1.CUDNBgpConfig {
-	return &networkingv1alpha1.CUDNBgpConfig{
+func newReadyBGPCloudConfiguration() *networkingapi.BGPCloudConfiguration {
+	return &networkingapi.BGPCloudConfiguration{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: networkingv1alpha1.CUDNBgpConfigSpec{
-			Platform: networkingv1alpha1.PlatformManual,
-			BGP: networkingv1alpha1.BGPConfig{
+		Spec: networkingapi.BGPCloudConfigurationSpec{
+			Platform: networkingapi.PlatformManual,
+			BGP: networkingapi.BGPConfig{
 				LocalASN:          65001,
-				LivenessDetection: networkingv1alpha1.LivenessDetectionBGPKeepalive,
-				PeerGroups: []networkingv1alpha1.PeerGroup{
+				LivenessDetection: networkingapi.LivenessDetectionBGPKeepalive,
+				PeerGroups: []networkingapi.PeerGroup{
 					{
 						NodeSelector: map[string]string{"bgp_router_subnet": "1"},
-						Neighbors:    []networkingv1alpha1.BGPNeighbor{{Address: "10.0.1.47", RemoteASN: 64512}},
+						Neighbors:    []networkingapi.BGPNeighbor{{Address: "10.0.1.47", RemoteASN: 64512}},
 					},
 				},
 			},
 			RouterNodeSelector: map[string]string{"bgp_router": "true"},
 		},
-		Status: networkingv1alpha1.CUDNBgpConfigStatus{
-			Phase: networkingv1alpha1.PhaseReady,
+		Status: networkingapi.BGPCloudConfigurationStatus{
+			Phase: networkingapi.PhaseReady,
 		},
 	}
 }
 
 func TestRoutingReconcile_FullReconcile(t *testing.T) {
-	routing := newTestCUDNBgpRouting()
-	config := newReadyCUDNBgpConfig()
+	routing := newTestBGPRouting()
+	config := newReadyBGPCloudConfiguration()
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "app1",
 			Labels: map[string]string{
 				LabelPrimaryUDN: "",
-				LabelCUDN:       "prod",
+				LabelClusterUDN: "prod",
 			},
 		},
 	}
@@ -105,7 +105,7 @@ func TestRoutingReconcile_FullReconcile(t *testing.T) {
 		WithStatusSubresource(routing, config).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 
 	// First reconcile adds finalizer
 	_, _ = r.Reconcile(context.Background(), reconcile.Request{
@@ -123,22 +123,20 @@ func TestRoutingReconcile_FullReconcile(t *testing.T) {
 		t.Errorf("expected 5m resync requeue, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpRouting{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
-		t.Fatalf("failed to get routing: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseReady {
+	updated := &networkingapi.BGPRouting{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseReady {
 		t.Errorf("expected Ready, got %s", updated.Status.Phase)
 	}
 	if len(updated.Status.Conditions) != 2 {
 		t.Errorf("expected 2 conditions, got %d", len(updated.Status.Conditions))
 	}
 
-	// Verify CUDN created
+	// Verify ClusterUDN created
 	cudn := &unstructured.Unstructured{}
-	cudn.SetGroupVersionKind(CUDNNetworkGVK)
+	cudn.SetGroupVersionKind(ClusterUDNGVK)
 	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster-udn-prod"}, cudn); err != nil {
-		t.Fatalf("CUDN not created: %v", err)
+		t.Fatalf("ClusterUDN not created: %v", err)
 	}
 
 	// Verify RouteAdvertisements created
@@ -150,19 +148,19 @@ func TestRoutingReconcile_FullReconcile(t *testing.T) {
 }
 
 func TestRoutingReconcile_RepeatedReconcile_DoesNotRewriteSharedRouteAdvertisements(t *testing.T) {
-	config := newReadyCUDNBgpConfig()
-	routingProd := newTestCUDNBgpRouting()
-	routingStaging := &networkingv1alpha1.CUDNBgpRouting{
+	config := newReadyBGPCloudConfiguration()
+	routingProd := newTestBGPRouting()
+	routingStaging := &networkingapi.BGPRouting{
 		ObjectMeta: metav1.ObjectMeta{Name: "staging"},
-		Spec: networkingv1alpha1.CUDNBgpRoutingSpec{
-			Network: networkingv1alpha1.NetworkConfig{Name: "staging", Subnets: []string{"10.200.0.0/16"}},
+		Spec: networkingapi.BGPRoutingSpec{
+			Network: networkingapi.NetworkConfig{Name: "staging", Subnets: []string{"10.200.0.0/16"}},
 		},
 	}
 	nsProd := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "app1", Labels: map[string]string{LabelPrimaryUDN: "", LabelCUDN: "prod"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "app1", Labels: map[string]string{LabelPrimaryUDN: "", LabelClusterUDN: "prod"}},
 	}
 	nsStaging := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "app2", Labels: map[string]string{LabelPrimaryUDN: "", LabelCUDN: "staging"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "app2", Labels: map[string]string{LabelPrimaryUDN: "", LabelClusterUDN: "staging"}},
 	}
 
 	s := routingTestScheme()
@@ -171,7 +169,7 @@ func TestRoutingReconcile_RepeatedReconcile_DoesNotRewriteSharedRouteAdvertiseme
 		WithStatusSubresource(routingProd, routingStaging, config).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 
 	prodReq := reconcile.Request{NamespacedName: types.NamespacedName{Name: "prod"}}
 	stagingReq := reconcile.Request{NamespacedName: types.NamespacedName{Name: "staging"}}
@@ -197,7 +195,7 @@ func TestRoutingReconcile_RepeatedReconcile_DoesNotRewriteSharedRouteAdvertiseme
 
 	// Reconcile both CRs again with no external state changed. This is the
 	// scenario that used to loop forever: mapRAToRouting fans the shared
-	// RA object's watch out to every CUDNBgpRouting CR, and each one used
+	// RA object's watch out to every BGPRouting CR, and each one used
 	// to rewrite RA unconditionally, re-triggering all the others again.
 	if _, err := r.Reconcile(context.Background(), prodReq); err != nil {
 		t.Fatalf("prod repeat reconcile error: %v", err)
@@ -216,9 +214,9 @@ func TestRoutingReconcile_RepeatedReconcile_DoesNotRewriteSharedRouteAdvertiseme
 }
 
 func TestRoutingReconcile_NoNamespace(t *testing.T) {
-	routing := newTestCUDNBgpRouting()
+	routing := newTestBGPRouting()
 	routing.Finalizers = []string{RoutingFinalizerName}
-	config := newReadyCUDNBgpConfig()
+	config := newReadyBGPCloudConfiguration()
 
 	s := routingTestScheme()
 	c := fake.NewClientBuilder().WithScheme(s).
@@ -226,7 +224,7 @@ func TestRoutingReconcile_NoNamespace(t *testing.T) {
 		WithStatusSubresource(routing, config).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "prod"},
 	})
@@ -237,18 +235,16 @@ func TestRoutingReconcile_NoNamespace(t *testing.T) {
 		t.Errorf("expected 30s degraded requeue, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpRouting{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
-		t.Fatalf("failed to get routing: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	updated := &networkingapi.BGPRouting{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
 }
 
 func TestRoutingReconcile_DeleteLastRemovesRA(t *testing.T) {
 	now := metav1.Now()
-	routing := newTestCUDNBgpRouting()
+	routing := newTestBGPRouting()
 	routing.Finalizers = []string{RoutingFinalizerName}
 	routing.DeletionTimestamp = &now
 
@@ -269,7 +265,7 @@ func TestRoutingReconcile_DeleteLastRemovesRA(t *testing.T) {
 		WithStatusSubresource(routing).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "prod"},
 	})
@@ -288,14 +284,14 @@ func TestRoutingReconcile_DeleteLastRemovesRA(t *testing.T) {
 
 func TestRoutingReconcile_DeleteKeepsRAWhenOthersExist(t *testing.T) {
 	now := metav1.Now()
-	routing := newTestCUDNBgpRouting()
+	routing := newTestBGPRouting()
 	routing.Finalizers = []string{RoutingFinalizerName}
 	routing.DeletionTimestamp = &now
 
-	other := &networkingv1alpha1.CUDNBgpRouting{
+	other := &networkingapi.BGPRouting{
 		ObjectMeta: metav1.ObjectMeta{Name: "staging"},
-		Spec: networkingv1alpha1.CUDNBgpRoutingSpec{
-			Network: networkingv1alpha1.NetworkConfig{
+		Spec: networkingapi.BGPRoutingSpec{
+			Network: networkingapi.NetworkConfig{
 				Name: "staging", Subnets: []string{"10.200.0.0/16"},
 			},
 		},
@@ -318,7 +314,7 @@ func TestRoutingReconcile_DeleteKeepsRAWhenOthersExist(t *testing.T) {
 		WithStatusSubresource(routing, other).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "prod"},
 	})
@@ -335,17 +331,17 @@ func TestRoutingReconcile_DeleteKeepsRAWhenOthersExist(t *testing.T) {
 }
 
 func TestRoutingReconcile_DuplicateNetworkName(t *testing.T) {
-	existing := &networkingv1alpha1.CUDNBgpRouting{
+	existing := &networkingapi.BGPRouting{
 		ObjectMeta: metav1.ObjectMeta{Name: "existing-prod"},
-		Spec: networkingv1alpha1.CUDNBgpRoutingSpec{
-			Network: networkingv1alpha1.NetworkConfig{
+		Spec: networkingapi.BGPRoutingSpec{
+			Network: networkingapi.NetworkConfig{
 				Name: "prod", Subnets: []string{"10.100.0.0/16"},
 			},
 		},
 	}
-	duplicate := newTestCUDNBgpRouting()
+	duplicate := newTestBGPRouting()
 	duplicate.Finalizers = []string{RoutingFinalizerName}
-	config := newReadyCUDNBgpConfig()
+	config := newReadyBGPCloudConfiguration()
 
 	s := routingTestScheme()
 	c := fake.NewClientBuilder().WithScheme(s).
@@ -353,7 +349,7 @@ func TestRoutingReconcile_DuplicateNetworkName(t *testing.T) {
 		WithStatusSubresource(existing, duplicate, config).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "prod"},
 	})
@@ -365,11 +361,9 @@ func TestRoutingReconcile_DuplicateNetworkName(t *testing.T) {
 		t.Errorf("expected no requeue for terminal DuplicateNetwork, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpRouting{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
-		t.Fatalf("failed to get routing: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	updated := &networkingapi.BGPRouting{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
 }
@@ -377,23 +371,23 @@ func TestRoutingReconcile_DuplicateNetworkName(t *testing.T) {
 // After the conflicting CR is deleted, the degraded duplicate recovers to Ready
 // on the next reconcile (triggered in production by enqueueAllRoutings).
 func TestRoutingReconcile_DuplicateNetwork_RecoversOnConflictDelete(t *testing.T) {
-	existing := &networkingv1alpha1.CUDNBgpRouting{
+	existing := &networkingapi.BGPRouting{
 		ObjectMeta: metav1.ObjectMeta{Name: "existing-prod"},
-		Spec: networkingv1alpha1.CUDNBgpRoutingSpec{
-			Network: networkingv1alpha1.NetworkConfig{
+		Spec: networkingapi.BGPRoutingSpec{
+			Network: networkingapi.NetworkConfig{
 				Name: "prod", Subnets: []string{"10.100.0.0/16"},
 			},
 		},
 	}
-	duplicate := newTestCUDNBgpRouting()
+	duplicate := newTestBGPRouting()
 	duplicate.Finalizers = []string{RoutingFinalizerName}
-	config := newReadyCUDNBgpConfig()
+	config := newReadyBGPCloudConfiguration()
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "app1",
 			Labels: map[string]string{
 				LabelPrimaryUDN: "",
-				LabelCUDN:       "prod",
+				LabelClusterUDN: "prod",
 			},
 		},
 	}
@@ -404,9 +398,8 @@ func TestRoutingReconcile_DuplicateNetwork_RecoversOnConflictDelete(t *testing.T
 		WithStatusSubresource(existing, duplicate, config).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 
-	// First reconcile: DuplicateNetwork → Degraded, no requeue.
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "prod"},
 	})
@@ -416,21 +409,16 @@ func TestRoutingReconcile_DuplicateNetwork_RecoversOnConflictDelete(t *testing.T
 	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue for terminal DuplicateNetwork, got %v", result.RequeueAfter)
 	}
-	before := &networkingv1alpha1.CUDNBgpRouting{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, before); err != nil {
-		t.Fatalf("failed to get routing: %v", err)
-	}
-	if before.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	before := &networkingapi.BGPRouting{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, before)
+	if before.Status.Phase != networkingapi.PhaseDegraded {
 		t.Fatalf("expected Degraded after duplicate, got %s", before.Status.Phase)
 	}
 
-	// Simulate conflict resolution: delete the conflicting CR.
-	// In production this triggers enqueueAllRoutings which re-enqueues "prod".
 	if err := c.Delete(context.Background(), existing); err != nil {
 		t.Fatalf("failed to delete existing-prod: %v", err)
 	}
 
-	// Re-reconcile "prod" (as the secondary watch would trigger).
 	result2, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "prod"},
 	})
@@ -441,20 +429,18 @@ func TestRoutingReconcile_DuplicateNetwork_RecoversOnConflictDelete(t *testing.T
 		t.Errorf("expected 5m resync after recovery, got %v", result2.RequeueAfter)
 	}
 
-	recovered := &networkingv1alpha1.CUDNBgpRouting{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, recovered); err != nil {
-		t.Fatalf("failed to get routing: %v", err)
-	}
-	if recovered.Status.Phase != networkingv1alpha1.PhaseReady {
+	recovered := &networkingapi.BGPRouting{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, recovered)
+	if recovered.Status.Phase != networkingapi.PhaseReady {
 		t.Errorf("expected Ready after conflict resolution, got %s", recovered.Status.Phase)
 	}
 }
 
 // NamespaceNotReady stays transient (regression guard — must still be 30s).
 func TestRoutingReconcile_NamespaceNotReady_StillTransient(t *testing.T) {
-	routing := newTestCUDNBgpRouting()
+	routing := newTestBGPRouting()
 	routing.Finalizers = []string{RoutingFinalizerName}
-	config := newReadyCUDNBgpConfig()
+	config := newReadyBGPCloudConfiguration()
 
 	s := routingTestScheme()
 	c := fake.NewClientBuilder().WithScheme(s).
@@ -462,7 +448,7 @@ func TestRoutingReconcile_NamespaceNotReady_StillTransient(t *testing.T) {
 		WithStatusSubresource(routing, config).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "prod"},
 	})
@@ -476,16 +462,16 @@ func TestRoutingReconcile_NamespaceNotReady_StillTransient(t *testing.T) {
 
 // TestEnqueueAllRoutings verifies the mapper returns a reconcile.Request for every CR.
 func TestEnqueueAllRoutings(t *testing.T) {
-	routing1 := newTestCUDNBgpRouting()
-	routing2 := &networkingv1alpha1.CUDNBgpRouting{
+	routing1 := newTestBGPRouting()
+	routing2 := &networkingapi.BGPRouting{
 		ObjectMeta: metav1.ObjectMeta{Name: "staging"},
-		Spec: networkingv1alpha1.CUDNBgpRoutingSpec{
-			Network: networkingv1alpha1.NetworkConfig{Name: "staging", Subnets: []string{"10.200.0.0/16"}},
+		Spec: networkingapi.BGPRoutingSpec{
+			Network: networkingapi.NetworkConfig{Name: "staging", Subnets: []string{"10.200.0.0/16"}},
 		},
 	}
 	s := routingTestScheme()
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(routing1, routing2).Build()
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 
 	reqs := r.enqueueAllRoutings(context.Background(), routing1)
 	if len(reqs) != 2 {
@@ -500,17 +486,17 @@ func TestEnqueueAllRoutings(t *testing.T) {
 	}
 }
 
-func TestMapCUDNToRouting_ManagedCUDN(t *testing.T) {
-	routing := newTestCUDNBgpRouting()
+func TestMapClusterUDNToRouting_Managed(t *testing.T) {
+	routing := newTestBGPRouting()
 	s := routingTestScheme()
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(routing).Build()
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 
 	cudn := &unstructured.Unstructured{}
-	cudn.SetName(CUDNNamePrefix + "prod")
+	cudn.SetName(ClusterUDNNamePrefix + "prod")
 	cudn.SetLabels(map[string]string{LabelManagedBy: LabelManagedByVal})
 
-	requests := r.mapCUDNToRouting(context.Background(), cudn)
+	requests := r.mapClusterUDNToRouting(context.Background(), cudn)
 	if len(requests) != 1 {
 		t.Fatalf("expected 1 request, got %d", len(requests))
 	}
@@ -519,34 +505,34 @@ func TestMapCUDNToRouting_ManagedCUDN(t *testing.T) {
 	}
 }
 
-func TestMapCUDNToRouting_UnmanagedCUDN(t *testing.T) {
-	routing := newTestCUDNBgpRouting()
+func TestMapClusterUDNToRouting_Unmanaged(t *testing.T) {
+	routing := newTestBGPRouting()
 	s := routingTestScheme()
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(routing).Build()
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 
 	cudn := &unstructured.Unstructured{}
-	cudn.SetName(CUDNNamePrefix + "prod")
+	cudn.SetName(ClusterUDNNamePrefix + "prod")
 	cudn.SetLabels(map[string]string{"other": "label"})
 
-	requests := r.mapCUDNToRouting(context.Background(), cudn)
+	requests := r.mapClusterUDNToRouting(context.Background(), cudn)
 	if len(requests) != 0 {
-		t.Errorf("expected 0 requests for unmanaged CUDN, got %d", len(requests))
+		t.Errorf("expected 0 requests for unmanaged ClusterUDN, got %d", len(requests))
 	}
 }
 
-// TestRoutingReconcile_CUDNSpecInvalid_NoRequeue: an invalid CUDN spec (e.g. bad CIDR)
-// is terminal — the user must correct spec.network in the CUDNBgpRouting.
+// TestRoutingReconcile_CUDNSpecInvalid_NoRequeue: an invalid ClusterUDN spec (e.g. bad CIDR)
+// is terminal — the user must correct spec.network in the BGPRouting.
 func TestRoutingReconcile_CUDNSpecInvalid_NoRequeue(t *testing.T) {
-	routing := newTestCUDNBgpRouting()
+	routing := newTestBGPRouting()
 	routing.Finalizers = []string{RoutingFinalizerName}
-	config := newReadyCUDNBgpConfig()
+	config := newReadyBGPCloudConfiguration()
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "app1",
 			Labels: map[string]string{
 				LabelPrimaryUDN: "",
-				LabelCUDN:       "prod",
+				LabelClusterUDN: "prod",
 			},
 		},
 	}
@@ -563,7 +549,7 @@ func TestRoutingReconcile_CUDNSpecInvalid_NoRequeue(t *testing.T) {
 		WithStatusSubresource(routing, config).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-				if obj.GetName() == CUDNNamePrefix+"prod" {
+				if obj.GetName() == ClusterUDNNamePrefix+"prod" {
 					return invalidErr
 				}
 				return cl.Create(ctx, obj, opts...)
@@ -571,7 +557,7 @@ func TestRoutingReconcile_CUDNSpecInvalid_NoRequeue(t *testing.T) {
 		}).
 		Build()
 
-	r := &CUDNBgpRoutingReconciler{Client: c, Scheme: s}
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "prod"},
 	})
@@ -582,20 +568,18 @@ func TestRoutingReconcile_CUDNSpecInvalid_NoRequeue(t *testing.T) {
 		t.Errorf("expected no requeue for terminal CUDNSpecInvalid, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpRouting{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
-		t.Fatalf("failed to get routing: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	updated := &networkingapi.BGPRouting{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCUDNCreated {
+		if cond.Type == networkingapi.ConditionNetworkCreated {
 			if cond.Reason != ReasonCUDNSpecInvalid {
 				t.Errorf("expected reason CUDNSpecInvalid, got %s", cond.Reason)
 			}
 			return
 		}
 	}
-	t.Error("CUDNCreated condition with CUDNSpecInvalid reason not found")
+	t.Error("NetworkCreated condition with CUDNSpecInvalid reason not found")
 }

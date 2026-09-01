@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
-	ConditionCUDNCreated                = "CUDNCreated"
+	ConditionNetworkCreated             = "NetworkCreated"
 	ConditionRouteAdvertisementsCreated = "RouteAdvertisementsCreated"
 )
 
@@ -40,15 +40,15 @@ type NetworkConfig struct {
 	Subnets []string `json:"subnets"`
 }
 
-// CUDNBgpRoutingSpec defines the desired routing configuration for a single
+// BGPRoutingSpec defines the desired routing configuration for a single
 // network to advertise via BGP.
-type CUDNBgpRoutingSpec struct {
+type BGPRoutingSpec struct {
 	// Network defines the network to create and advertise.
 	Network NetworkConfig `json:"network"`
 }
 
-// CUDNBgpRoutingStatus defines the observed state of CUDNBgpRouting.
-type CUDNBgpRoutingStatus struct {
+// BGPRoutingStatus defines the observed state of BGPRouting.
+type BGPRoutingStatus struct {
 	// Phase is the current lifecycle phase of the routing configuration.
 	// +optional
 	Phase PhaseType `json:"phase,omitempty"`
@@ -69,26 +69,26 @@ type CUDNBgpRoutingStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// CUDNBgpRouting declares a single network to advertise via BGP.
+// BGPRouting declares a single network to advertise via BGP.
 // Users must pre-create and label namespaces; the operator manages only the
 // ClusterUserDefinedNetwork and RouteAdvertisements.
-type CUDNBgpRouting struct {
+type BGPRouting struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   CUDNBgpRoutingSpec   `json:"spec,omitempty"`
-	Status CUDNBgpRoutingStatus `json:"status,omitempty"`
+	Spec   BGPRoutingSpec   `json:"spec,omitempty"`
+	Status BGPRoutingStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// CUDNBgpRoutingList contains a list of CUDNBgpRouting.
-type CUDNBgpRoutingList struct {
+// BGPRoutingList contains a list of BGPRouting.
+type BGPRoutingList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []CUDNBgpRouting `json:"items"`
+	Items           []BGPRouting `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&CUDNBgpRouting{}, &CUDNBgpRoutingList{})
+	SchemeBuilder.Register(&BGPRouting{}, &BGPRoutingList{})
 }

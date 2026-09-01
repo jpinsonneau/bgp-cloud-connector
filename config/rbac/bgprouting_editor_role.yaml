@@ -1,4 +1,4 @@
-# This rule is not used by the project openshift-cudn-bgp-routing itself.
+# This rule is not used by the project bgp-cloud-connector itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
 # Grants permissions to create, update, and delete resources within the networking.openshift.io.
@@ -9,14 +9,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
-    app.kubernetes.io/name: openshift-cudn-bgp-routing
+    app.kubernetes.io/name: bgp-cloud-connector
     app.kubernetes.io/managed-by: kustomize
-  name: cudnbgpconfig-editor-role
+  name: bgprouting-editor-role
 rules:
 - apiGroups:
   - networking.openshift.io
   resources:
-  - cudnbgpconfigs
+  - bgproutings
   verbs:
   - create
   - delete
@@ -28,6 +28,6 @@ rules:
 - apiGroups:
   - networking.openshift.io
   resources:
-  - cudnbgpconfigs/status
+  - bgproutings/status
   verbs:
   - get

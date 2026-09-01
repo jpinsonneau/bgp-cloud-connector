@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -250,7 +250,7 @@ type BGPConfig struct {
 	PeerGroups []PeerGroup `json:"peerGroups,omitempty"`
 }
 
-// CUDNBgpConfigSpec defines the desired BGP infrastructure configuration for the
+// BGPCloudConfigurationSpec defines the desired BGP infrastructure configuration for the
 // cluster: which cloud platform to integrate with, which nodes act as BGP
 // routers, and how BGP sessions are established.
 //
@@ -259,7 +259,7 @@ type BGPConfig struct {
 // +kubebuilder:validation:XValidation:rule="(self.platform == 'GCP') == has(self.gcp)",message="spec.gcp must be set when spec.platform is GCP, and must be absent otherwise"
 // +kubebuilder:validation:XValidation:rule="self.platform != 'Manual' || (has(self.bgp.peerGroups) && size(self.bgp.peerGroups) > 0)",message="spec.bgp.peerGroups is required when spec.platform is Manual"
 // +kubebuilder:validation:XValidation:rule="self.platform == 'Manual' || !has(self.bgp.peerGroups) || size(self.bgp.peerGroups) == 0",message="spec.bgp.peerGroups may only be set when spec.platform is Manual"
-type CUDNBgpConfigSpec struct {
+type BGPCloudConfigurationSpec struct {
 	// Platform selects the cloud provider integration mode.
 	// AWS auto-discovers BGP endpoints from VPC Route Servers.
 	// Manual requires explicit peer groups in spec.bgp.peerGroups.
@@ -279,8 +279,8 @@ type CUDNBgpConfigSpec struct {
 	GCP   *GCPConfig   `json:"gcp,omitempty"`
 }
 
-// CUDNBgpConfigStatus defines the observed state of CUDNBgpConfig.
-type CUDNBgpConfigStatus struct {
+// BGPCloudConfigurationStatus defines the observed state of BGPCloudConfiguration.
+type BGPCloudConfigurationStatus struct {
 	// Phase is the current lifecycle phase of the BGP configuration.
 	// +optional
 	Phase PhaseType `json:"phase,omitempty"`
@@ -310,24 +310,24 @@ type CUDNBgpConfigStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// CUDNBgpConfig is the singleton cluster-scoped BGP infrastructure configuration.
-type CUDNBgpConfig struct {
+// BGPCloudConfiguration is the singleton cluster-scoped BGP infrastructure configuration.
+type BGPCloudConfiguration struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   CUDNBgpConfigSpec   `json:"spec,omitempty"`
-	Status CUDNBgpConfigStatus `json:"status,omitempty"`
+	Spec   BGPCloudConfigurationSpec   `json:"spec,omitempty"`
+	Status BGPCloudConfigurationStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// CUDNBgpConfigList contains a list of CUDNBgpConfig.
-type CUDNBgpConfigList struct {
+// BGPCloudConfigurationList contains a list of BGPCloudConfiguration.
+type BGPCloudConfigurationList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []CUDNBgpConfig `json:"items"`
+	Items           []BGPCloudConfiguration `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&CUDNBgpConfig{}, &CUDNBgpConfigList{})
+	SchemeBuilder.Register(&BGPCloudConfiguration{}, &BGPCloudConfigurationList{})
 }

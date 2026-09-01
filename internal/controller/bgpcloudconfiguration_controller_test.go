@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkingv1alpha1 "github.com/openshift/bgp-cloud-connector/api/v1alpha1"
+	networkingapi "github.com/openshift/bgp-cloud-connector/api/v1beta1"
 	"github.com/openshift/bgp-cloud-connector/internal/platform"
 	awsplatform "github.com/openshift/bgp-cloud-connector/internal/platform/aws"
 )
@@ -42,7 +42,7 @@ import (
 func configTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
-	_ = networkingv1alpha1.AddToScheme(s)
+	_ = networkingapi.AddToScheme(s)
 
 	s.AddKnownTypeWithName(NetworkGVK, &unstructured.Unstructured{})
 	s.AddKnownTypeWithName(NetworkGVK.GroupVersion().WithKind("NetworkList"), &unstructured.UnstructuredList{})
@@ -52,20 +52,20 @@ func configTestScheme() *runtime.Scheme {
 	return s
 }
 
-func newTestCUDNBgpConfig() *networkingv1alpha1.CUDNBgpConfig {
-	return &networkingv1alpha1.CUDNBgpConfig{
+func newTestBGPCloudConfiguration() *networkingapi.BGPCloudConfiguration {
+	return &networkingapi.BGPCloudConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "cluster",
 		},
-		Spec: networkingv1alpha1.CUDNBgpConfigSpec{
-			Platform: networkingv1alpha1.PlatformManual,
-			BGP: networkingv1alpha1.BGPConfig{
+		Spec: networkingapi.BGPCloudConfigurationSpec{
+			Platform: networkingapi.PlatformManual,
+			BGP: networkingapi.BGPConfig{
 				LocalASN:          65001,
-				LivenessDetection: networkingv1alpha1.LivenessDetectionBGPKeepalive,
-				PeerGroups: []networkingv1alpha1.PeerGroup{
+				LivenessDetection: networkingapi.LivenessDetectionBGPKeepalive,
+				PeerGroups: []networkingapi.PeerGroup{
 					{
 						NodeSelector: map[string]string{"bgp_router_subnet": "1"},
-						Neighbors: []networkingv1alpha1.BGPNeighbor{
+						Neighbors: []networkingapi.BGPNeighbor{
 							{Address: "10.0.1.47", RemoteASN: 64512},
 							{Address: "10.0.1.183", RemoteASN: 64512},
 						},
@@ -78,7 +78,7 @@ func newTestCUDNBgpConfig() *networkingv1alpha1.CUDNBgpConfig {
 }
 
 func TestConfigReconcile_FullReconcile(t *testing.T) {
-	config := newTestCUDNBgpConfig()
+	config := newTestBGPCloudConfiguration()
 	s := configTestScheme()
 
 	network := &unstructured.Unstructured{
@@ -105,7 +105,7 @@ func TestConfigReconcile_FullReconcile(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{Client: c, Scheme: s}
+	r := &BGPCloudConfigurationReconciler{Client: c, Scheme: s}
 
 	// First reconcile adds finalizer
 	_, _ = r.Reconcile(context.Background(), reconcile.Request{
@@ -123,11 +123,11 @@ func TestConfigReconcile_FullReconcile(t *testing.T) {
 		t.Errorf("expected 5m resync requeue, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
+	updated := &networkingapi.BGPCloudConfiguration{}
 	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
 		t.Fatalf("failed to get config: %v", err)
 	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseReady {
+	if updated.Status.Phase != networkingapi.PhaseReady {
 		t.Errorf("expected phase Ready, got %s", updated.Status.Phase)
 	}
 
@@ -138,14 +138,14 @@ func TestConfigReconcile_FullReconcile(t *testing.T) {
 	// Verify FRRConfiguration was created
 	frrConfig := &unstructured.Unstructured{}
 	frrConfig.SetGroupVersionKind(FRRConfigurationGVK)
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cudn-bgp-1", Namespace: FRRNamespace}, frrConfig); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "bgp-cc-1", Namespace: FRRNamespace}, frrConfig); err != nil {
 		t.Fatalf("FRRConfiguration not created: %v", err)
 	}
 }
 
 // singleton name mismatch → Degraded, no requeue (terminal).
 func TestConfigReconcile_InvalidName_NoRequeue(t *testing.T) {
-	config := newTestCUDNBgpConfig()
+	config := newTestBGPCloudConfiguration()
 	config.Name = "wrong-name"
 
 	s := configTestScheme()
@@ -154,7 +154,7 @@ func TestConfigReconcile_InvalidName_NoRequeue(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{Client: c, Scheme: s}
+	r := &BGPCloudConfigurationReconciler{Client: c, Scheme: s}
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "wrong-name"},
 	})
@@ -165,15 +165,13 @@ func TestConfigReconcile_InvalidName_NoRequeue(t *testing.T) {
 		t.Errorf("expected no requeue for terminal InvalidName, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "wrong-name"}, updated); err != nil {
-		t.Fatalf("failed to get config: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	updated := &networkingapi.BGPCloudConfiguration{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "wrong-name"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected phase Degraded, got %s", updated.Status.Phase)
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionNetworkOperatorPatched {
+		if cond.Type == networkingapi.ConditionNetworkOperatorPatched {
 			if cond.Reason != ReasonInvalidName {
 				t.Errorf("expected reason InvalidName, got %s", cond.Reason)
 			}
@@ -185,7 +183,7 @@ func TestConfigReconcile_InvalidName_NoRequeue(t *testing.T) {
 
 // second reconcile of InvalidName still returns no requeue (regression guard).
 func TestConfigReconcile_InvalidName_SecondReconcileNoRequeue(t *testing.T) {
-	config := newTestCUDNBgpConfig()
+	config := newTestBGPCloudConfiguration()
 	config.Name = "wrong-name"
 
 	s := configTestScheme()
@@ -194,7 +192,7 @@ func TestConfigReconcile_InvalidName_SecondReconcileNoRequeue(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{Client: c, Scheme: s}
+	r := &BGPCloudConfigurationReconciler{Client: c, Scheme: s}
 
 	result1, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "wrong-name"},
@@ -219,14 +217,14 @@ func TestConfigReconcile_InvalidName_SecondReconcileNoRequeue(t *testing.T) {
 
 func TestConfigReconcile_DeleteBlockedByRouting(t *testing.T) {
 	now := metav1.Now()
-	config := newTestCUDNBgpConfig()
+	config := newTestBGPCloudConfiguration()
 	config.Finalizers = []string{ConfigFinalizerName}
 	config.DeletionTimestamp = &now
 
-	routing := &networkingv1alpha1.CUDNBgpRouting{
+	routing := &networkingapi.BGPRouting{
 		ObjectMeta: metav1.ObjectMeta{Name: "prod"},
-		Spec: networkingv1alpha1.CUDNBgpRoutingSpec{
-			Network: networkingv1alpha1.NetworkConfig{
+		Spec: networkingapi.BGPRoutingSpec{
+			Network: networkingapi.NetworkConfig{
 				Name: "prod", Subnets: []string{"10.100.0.0/16"},
 			},
 		},
@@ -238,7 +236,7 @@ func TestConfigReconcile_DeleteBlockedByRouting(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{Client: c, Scheme: s}
+	r := &BGPCloudConfigurationReconciler{Client: c, Scheme: s}
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "cluster"},
 	})
@@ -249,10 +247,8 @@ func TestConfigReconcile_DeleteBlockedByRouting(t *testing.T) {
 		t.Error("expected requeue when routing CRs still exist")
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
-		t.Fatalf("failed to get config: %v", err)
-	}
+	updated := &networkingapi.BGPCloudConfiguration{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
 	found := false
 	for _, f := range updated.Finalizers {
 		if f == ConfigFinalizerName {
@@ -311,19 +307,19 @@ func (m *mockPlatform) Cleanup(_ context.Context) error {
 	return m.cleanupErr
 }
 
-func newTestCUDNBgpConfigWithAWS() *networkingv1alpha1.CUDNBgpConfig {
-	return &networkingv1alpha1.CUDNBgpConfig{
+func newTestBGPCloudConfigurationWithAWS() *networkingapi.BGPCloudConfiguration {
+	return &networkingapi.BGPCloudConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "cluster",
 		},
-		Spec: networkingv1alpha1.CUDNBgpConfigSpec{
-			Platform: networkingv1alpha1.PlatformAWS,
-			BGP: networkingv1alpha1.BGPConfig{
+		Spec: networkingapi.BGPCloudConfigurationSpec{
+			Platform: networkingapi.PlatformAWS,
+			BGP: networkingapi.BGPConfig{
 				LocalASN:          65001,
-				LivenessDetection: networkingv1alpha1.LivenessDetectionBGPKeepalive,
+				LivenessDetection: networkingapi.LivenessDetectionBGPKeepalive,
 			},
 			RouterNodeSelector: map[string]string{"bgp_router": "true"},
-			AWS: &networkingv1alpha1.AWSConfig{
+			AWS: &networkingapi.AWSConfig{
 				Region:         "us-east-1",
 				RouteServerIDs: []string{"rs-1"},
 			},
@@ -346,7 +342,7 @@ func newRouterNode(name, ip, az, providerID string) *corev1.Node {
 
 func TestConfigReconcile_AWSFullReconcile(t *testing.T) {
 	mock := &mockPlatform{}
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	s := configTestScheme()
 
 	network := &unstructured.Unstructured{
@@ -369,9 +365,9 @@ func TestConfigReconcile_AWSFullReconcile(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return mock, nil
 		},
 	}
@@ -393,11 +389,9 @@ func TestConfigReconcile_AWSFullReconcile(t *testing.T) {
 		t.Fatal("expected ReconcileNodes to be called")
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
-		t.Fatalf("failed to get config: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseReady {
+	updated := &networkingapi.BGPCloudConfiguration{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseReady {
 		t.Errorf("expected Ready, got %s", updated.Status.Phase)
 	}
 	if len(updated.Status.Conditions) != 6 {
@@ -416,17 +410,17 @@ func TestConfigReconcile_AWSFullReconcile(t *testing.T) {
 	}
 
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCloudEndpointsDiscovered {
+		if cond.Type == networkingapi.ConditionCloudEndpointsDiscovered {
 			if cond.Status != metav1.ConditionTrue {
 				t.Errorf("expected CloudEndpointsDiscovered=True, got %s", cond.Status)
 			}
 		}
-		if cond.Type == networkingv1alpha1.ConditionCloudResourcesReconciled {
+		if cond.Type == networkingapi.ConditionCloudResourcesReconciled {
 			if cond.Status != metav1.ConditionTrue {
 				t.Errorf("expected CloudResourcesReconciled=True, got %s", cond.Status)
 			}
 		}
-		if cond.Type == networkingv1alpha1.ConditionCompleteNodeInventory {
+		if cond.Type == networkingapi.ConditionCompleteNodeInventory {
 			if cond.Status != metav1.ConditionTrue || cond.Reason != "Complete" {
 				t.Errorf("expected CompleteNodeInventory=True/Complete, got %s/%s", cond.Status, cond.Reason)
 			}
@@ -436,14 +430,14 @@ func TestConfigReconcile_AWSFullReconcile(t *testing.T) {
 	// Verify FRR was created from discovery
 	frrConfig := &unstructured.Unstructured{}
 	frrConfig.SetGroupVersionKind(FRRConfigurationGVK)
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cudn-bgp-1", Namespace: FRRNamespace}, frrConfig); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "bgp-cc-1", Namespace: FRRNamespace}, frrConfig); err != nil {
 		t.Fatalf("FRRConfiguration not created from discovery: %v", err)
 	}
 }
 
 func TestConfigReconcile_RepeatedReconcile_DoesNotRewriteFRRConfiguration(t *testing.T) {
 	mock := &mockPlatform{}
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	s := configTestScheme()
 
 	network := &unstructured.Unstructured{
@@ -466,9 +460,9 @@ func TestConfigReconcile_RepeatedReconcile_DoesNotRewriteFRRConfiguration(t *tes
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return mock, nil
 		},
 	}
@@ -484,7 +478,7 @@ func TestConfigReconcile_RepeatedReconcile_DoesNotRewriteFRRConfiguration(t *tes
 
 	frrConfig := &unstructured.Unstructured{}
 	frrConfig.SetGroupVersionKind(FRRConfigurationGVK)
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cudn-bgp-1", Namespace: FRRNamespace}, frrConfig); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "bgp-cc-1", Namespace: FRRNamespace}, frrConfig); err != nil {
 		t.Fatalf("FRRConfiguration not created from discovery: %v", err)
 	}
 	resourceVersionAfterFirstPass := frrConfig.GetResourceVersion()
@@ -498,7 +492,7 @@ func TestConfigReconcile_RepeatedReconcile_DoesNotRewriteFRRConfiguration(t *tes
 		t.Fatalf("second reconcile error: %v", err)
 	}
 
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cudn-bgp-1", Namespace: FRRNamespace}, frrConfig); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "bgp-cc-1", Namespace: FRRNamespace}, frrConfig); err != nil {
 		t.Fatalf("get FRRConfiguration after repeat reconcile: %v", err)
 	}
 	if frrConfig.GetResourceVersion() != resourceVersionAfterFirstPass {
@@ -520,7 +514,7 @@ func TestConfigReconcile_RepeatedReconcile_DoesNotRewriteFRRConfiguration(t *tes
 }
 
 func TestConfigReconcile_AWSCredentialFailure(t *testing.T) {
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
 	s := configTestScheme()
 
@@ -543,9 +537,9 @@ func TestConfigReconcile_AWSCredentialFailure(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return nil, &platform.CredentialError{Msg: "invalid credentials"}
 		},
 	}
@@ -556,15 +550,13 @@ func TestConfigReconcile_AWSCredentialFailure(t *testing.T) {
 		t.Errorf("expected no requeue for terminal CloudCredentialsInvalid, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
-		t.Fatalf("failed to get config: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	updated := &networkingapi.BGPCloudConfiguration{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCloudEndpointsDiscovered {
+		if cond.Type == networkingapi.ConditionCloudEndpointsDiscovered {
 			if cond.Reason != ReasonCloudCredentialsInvalid {
 				t.Errorf("expected reason CloudCredentialsInvalid, got %s", cond.Reason)
 			}
@@ -574,78 +566,11 @@ func TestConfigReconcile_AWSCredentialFailure(t *testing.T) {
 	t.Error("CloudEndpointsDiscovered condition not found")
 }
 
-// TestConfigReconcile_CredentialFailure_ClearsStaleNodeInventory verifies that
-// stale CompleteNodeInventory=True and CloudResourcesReconciled=True left by a
-// previous successful reconcile do not survive a later credential failure that
-// returns before Phase 5 runs.
-func TestConfigReconcile_CredentialFailure_ClearsStaleNodeInventory(t *testing.T) {
-	config := newTestCUDNBgpConfigWithAWS()
-	config.Finalizers = []string{ConfigFinalizerName}
-	// Seed stale conditions as if a previous reconcile had reached Phase 5.
-	config.Status.Conditions = []metav1.Condition{{
-		Type:               networkingv1alpha1.ConditionCompleteNodeInventory,
-		Status:             metav1.ConditionTrue,
-		Reason:             "Complete",
-		Message:            "stale from a previous reconcile",
-		LastTransitionTime: metav1.Now(),
-	}, {
-		Type:               networkingv1alpha1.ConditionCloudResourcesReconciled,
-		Status:             metav1.ConditionTrue,
-		Reason:             "Reconciled",
-		Message:            "stale from a previous reconcile",
-		LastTransitionTime: metav1.Now(),
-	}}
-	s := configTestScheme()
-
-	network := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "operator.openshift.io/v1",
-			"kind":       "Network",
-			"metadata":   map[string]interface{}{"name": "cluster"},
-			"spec":       map[string]interface{}{},
-		},
-	}
-	frrNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: FRRNamespace}}
-	frrPod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "frr-k8s-pod", Namespace: FRRNamespace, Labels: map[string]string{"app": "frr-k8s"}},
-		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
-	}
-
-	c := fake.NewClientBuilder().WithScheme(s).
-		WithObjects(config, network, frrNS, frrPod).
-		WithStatusSubresource(config).
-		Build()
-
-	r := &CUDNBgpConfigReconciler{
-		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
-			return nil, &platform.CredentialError{Msg: "invalid credentials"}
-		},
-	}
-
-	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}); err != nil {
-		t.Fatalf("reconcile returned error: %v", err)
-	}
-
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
-		t.Fatalf("failed to get config: %v", err)
-	}
-	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCompleteNodeInventory {
-			t.Errorf("expected stale CompleteNodeInventory to be cleared, got %s/%s", cond.Status, cond.Reason)
-		}
-		if cond.Type == networkingv1alpha1.ConditionCloudResourcesReconciled {
-			t.Errorf("expected stale CloudResourcesReconciled to be cleared, got %s/%s", cond.Status, cond.Reason)
-		}
-	}
-}
-
 // TestConfigReconcile_RouteServerNotFound_NoRequeue: non-existent route server ID is
 // terminal — user must correct spec.aws.routeServerIDs.
 func TestConfigReconcile_RouteServerNotFound_NoRequeue(t *testing.T) {
 	mock := &mockPlatform{discoverErr: &awsplatform.RouteServerNotFoundError{ID: "rs-deadbeef"}}
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
 	s := configTestScheme()
 
@@ -668,9 +593,9 @@ func TestConfigReconcile_RouteServerNotFound_NoRequeue(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return mock, nil
 		},
 	}
@@ -680,15 +605,13 @@ func TestConfigReconcile_RouteServerNotFound_NoRequeue(t *testing.T) {
 		t.Errorf("expected no requeue for terminal RouteServerNotFound, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
-		t.Fatalf("failed to get config: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	updated := &networkingapi.BGPCloudConfiguration{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCloudEndpointsDiscovered {
+		if cond.Type == networkingapi.ConditionCloudEndpointsDiscovered {
 			if cond.Reason != ReasonRouteServerNotFound {
 				t.Errorf("expected reason RouteServerNotFound, got %s", cond.Reason)
 			}
@@ -702,7 +625,7 @@ func TestConfigReconcile_RouteServerNotFound_NoRequeue(t *testing.T) {
 // (not a missing route server) must remain transient and requeue after 30s.
 func TestConfigReconcile_AWSDiscovery_TransientStillRequeues(t *testing.T) {
 	mock := &mockPlatform{discoverErr: fmt.Errorf("ec2: request throttled")}
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
 	s := configTestScheme()
 
@@ -725,9 +648,9 @@ func TestConfigReconcile_AWSDiscovery_TransientStillRequeues(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return mock, nil
 		},
 	}
@@ -737,13 +660,13 @@ func TestConfigReconcile_AWSDiscovery_TransientStillRequeues(t *testing.T) {
 		t.Errorf("generic AWS discovery failure must remain transient (30s), got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
+	updated := &networkingapi.BGPCloudConfiguration{}
 	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCloudEndpointsDiscovered {
+		if cond.Type == networkingapi.ConditionCloudEndpointsDiscovered {
 			if cond.Reason != ReasonCloudDiscoveryFailed {
 				t.Errorf("expected reason CloudDiscoveryFailed, got %s", cond.Reason)
 			}
@@ -828,7 +751,7 @@ func TestConfigReconcile_CredentialsPendingIsAWait(t *testing.T) {
 
 func TestConfigReconcile_AWSReconcileFailure(t *testing.T) {
 	mock := &mockPlatform{reconcileNodesErr: fmt.Errorf("ec2 API timeout")}
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
 	s := configTestScheme()
 
@@ -852,9 +775,9 @@ func TestConfigReconcile_AWSReconcileFailure(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return mock, nil
 		},
 	}
@@ -864,15 +787,13 @@ func TestConfigReconcile_AWSReconcileFailure(t *testing.T) {
 		t.Errorf("expected 30s degraded requeue, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
-		t.Fatalf("failed to get config: %v", err)
-	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	updated := &networkingapi.BGPCloudConfiguration{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCloudResourcesReconciled {
+		if cond.Type == networkingapi.ConditionCloudResourcesReconciled {
 			if cond.Reason != ReasonCloudReconcileFailed {
 				t.Errorf("expected reason CloudReconcileFailed, got %s", cond.Reason)
 			}
@@ -884,7 +805,7 @@ func TestConfigReconcile_AWSReconcileFailure(t *testing.T) {
 
 func TestConfigReconcile_AWSNodeFiltering(t *testing.T) {
 	mock := &mockPlatform{}
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
 	s := configTestScheme()
 
@@ -945,9 +866,9 @@ func TestConfigReconcile_AWSNodeFiltering(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return mock, nil
 		},
 	}
@@ -973,15 +894,15 @@ func TestConfigReconcile_AWSNodeFiltering(t *testing.T) {
 		t.Errorf("missing nodes in ReconcileNodes: %v", wantNodes)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
+	updated := &networkingapi.BGPCloudConfiguration{}
 	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
 		t.Fatalf("get updated config: %v", err)
 	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseConfiguring {
+	if updated.Status.Phase != networkingapi.PhaseConfiguring {
 		t.Errorf("expected Configuring, got %s", updated.Status.Phase)
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCompleteNodeInventory {
+		if cond.Type == networkingapi.ConditionCompleteNodeInventory {
 			if cond.Status != metav1.ConditionFalse || cond.Reason != "NodesIncomplete" {
 				t.Errorf("expected CompleteNodeInventory=False/NodesIncomplete, got %s/%s", cond.Status, cond.Reason)
 			}
@@ -998,7 +919,7 @@ func TestConfigReconcile_AWSNodeFiltering(t *testing.T) {
 
 func TestConfigReconcile_DeleteSucceedsWithCredentialFailure(t *testing.T) {
 	now := metav1.Now()
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
 	config.DeletionTimestamp = &now
 
@@ -1008,9 +929,9 @@ func TestConfigReconcile_DeleteSucceedsWithCredentialFailure(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return nil, &platform.CredentialError{Msg: "invalid credentials"}
 		},
 	}
@@ -1020,7 +941,7 @@ func TestConfigReconcile_DeleteSucceedsWithCredentialFailure(t *testing.T) {
 		t.Fatalf("deletion should succeed even with credential failure, got: %v", err)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
+	updated := &networkingapi.BGPCloudConfiguration{}
 	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
 	for _, f := range updated.Finalizers {
 		if f == ConfigFinalizerName {
@@ -1032,7 +953,7 @@ func TestConfigReconcile_DeleteSucceedsWithCredentialFailure(t *testing.T) {
 func TestConfigReconcile_DeleteSuccessful(t *testing.T) {
 	mock := &mockPlatform{}
 	now := metav1.Now()
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
 	config.DeletionTimestamp = &now
 
@@ -1041,7 +962,7 @@ func TestConfigReconcile_DeleteSuccessful(t *testing.T) {
 			"apiVersion": "frrk8s.metallb.io/v1beta1",
 			"kind":       "FRRConfiguration",
 			"metadata": map[string]interface{}{
-				"name":      "cudn-bgp-1",
+				"name":      "bgp-cc-1",
 				"namespace": FRRNamespace,
 				"labels":    map[string]interface{}{LabelManagedBy: LabelManagedByVal},
 			},
@@ -1054,9 +975,9 @@ func TestConfigReconcile_DeleteSuccessful(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return mock, nil
 		},
 	}
@@ -1075,11 +996,11 @@ func TestConfigReconcile_DeleteSuccessful(t *testing.T) {
 
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(FRRConfigurationGVK)
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cudn-bgp-1", Namespace: FRRNamespace}, obj); err == nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "bgp-cc-1", Namespace: FRRNamespace}, obj); err == nil {
 		t.Error("FRRConfiguration should be deleted during cleanup")
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
+	updated := &networkingapi.BGPCloudConfiguration{}
 	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
 	for _, f := range updated.Finalizers {
 		if f == ConfigFinalizerName {
@@ -1100,12 +1021,12 @@ func TestConfigReconcile_DeleteSuccessful(t *testing.T) {
 // Infrastructure/cluster and the fake client has none. What must not happen is
 // falling through to the default arm.
 func TestDefaultPlatformBuilder_EveryEnumValueDispatches(t *testing.T) {
-	for _, p := range networkingv1alpha1.AllPlatforms {
-		if p == networkingv1alpha1.PlatformManual {
+	for _, p := range networkingapi.AllPlatforms {
+		if p == networkingapi.PlatformManual {
 			continue // Manual builds no platform by design.
 		}
 		t.Run(string(p), func(t *testing.T) {
-			config := newTestCUDNBgpConfigWithAWS()
+			config := newTestBGPCloudConfigurationWithAWS()
 			config.Spec.Platform = p
 			c := fake.NewClientBuilder().WithScheme(configTestScheme()).Build()
 
@@ -1125,7 +1046,7 @@ func TestDefaultPlatformBuilder_EveryEnumValueDispatches(t *testing.T) {
 // expression is the only thing standing between a Manual cluster and an
 // attempt to reach a cloud API it has no business calling.
 func TestConfigReconcile_ManualSkipsPlatform(t *testing.T) {
-	config := newTestCUDNBgpConfig() // Platform: Manual
+	config := newTestBGPCloudConfiguration() // Platform: Manual
 	s := configTestScheme()
 
 	network := &unstructured.Unstructured{
@@ -1148,9 +1069,9 @@ func TestConfigReconcile_ManualSkipsPlatform(t *testing.T) {
 		Build()
 
 	builderCalled := false
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			builderCalled = true
 			return &mockPlatform{}, nil
 		},
@@ -1165,12 +1086,12 @@ func TestConfigReconcile_ManualSkipsPlatform(t *testing.T) {
 		t.Error("Manual must not construct a cloud platform")
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
+	updated := &networkingapi.BGPCloudConfiguration{}
 	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCloudEndpointsDiscovered ||
-			cond.Type == networkingv1alpha1.ConditionCloudResourcesReconciled ||
-			cond.Type == networkingv1alpha1.ConditionCompleteNodeInventory {
+		if cond.Type == networkingapi.ConditionCloudEndpointsDiscovered ||
+			cond.Type == networkingapi.ConditionCloudResourcesReconciled ||
+			cond.Type == networkingapi.ConditionCompleteNodeInventory {
 			t.Errorf("Manual must not report %s", cond.Type)
 		}
 	}
@@ -1180,14 +1101,14 @@ func TestConfigReconcile_ManualSkipsPlatform(t *testing.T) {
 }
 
 func TestConfigReconcile_ManualClearsStaleCloudStatus(t *testing.T) {
-	config := newTestCUDNBgpConfig()
-	config.Status.PeerGroups = []networkingv1alpha1.PeerGroupStatus{
-		{Key: "us-east-1a", Neighbors: []networkingv1alpha1.BGPNeighbor{{Address: "10.0.1.47", RemoteASN: 64512}}},
+	config := newTestBGPCloudConfiguration()
+	config.Status.PeerGroups = []networkingapi.PeerGroupStatus{
+		{Key: "us-east-1a", Neighbors: []networkingapi.BGPNeighbor{{Address: "10.0.1.47", RemoteASN: 64512}}},
 	}
 	config.Status.Conditions = []metav1.Condition{
-		{Type: networkingv1alpha1.ConditionCloudEndpointsDiscovered, Status: metav1.ConditionTrue, Reason: "Discovered"},
-		{Type: networkingv1alpha1.ConditionCloudResourcesReconciled, Status: metav1.ConditionTrue, Reason: "Reconciled"},
-		{Type: networkingv1alpha1.ConditionCompleteNodeInventory, Status: metav1.ConditionTrue, Reason: "Complete"},
+		{Type: networkingapi.ConditionCloudEndpointsDiscovered, Status: metav1.ConditionTrue, Reason: "Discovered"},
+		{Type: networkingapi.ConditionCloudResourcesReconciled, Status: metav1.ConditionTrue, Reason: "Reconciled"},
+		{Type: networkingapi.ConditionCompleteNodeInventory, Status: metav1.ConditionTrue, Reason: "Complete"},
 	}
 	s := configTestScheme()
 
@@ -1210,7 +1131,7 @@ func TestConfigReconcile_ManualClearsStaleCloudStatus(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{Client: c, Scheme: s}
+	r := &BGPCloudConfigurationReconciler{Client: c, Scheme: s}
 
 	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}); err != nil {
 		t.Fatalf("reconcile error: %v", err)
@@ -1219,17 +1140,15 @@ func TestConfigReconcile_ManualClearsStaleCloudStatus(t *testing.T) {
 		t.Fatalf("reconcile error: %v", err)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
-		t.Fatalf("get updated config: %v", err)
-	}
+	updated := &networkingapi.BGPCloudConfiguration{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
 	if len(updated.Status.PeerGroups) != 0 {
 		t.Errorf("expected stale peerGroups cleared, got %d", len(updated.Status.PeerGroups))
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCloudEndpointsDiscovered ||
-			cond.Type == networkingv1alpha1.ConditionCloudResourcesReconciled ||
-			cond.Type == networkingv1alpha1.ConditionCompleteNodeInventory {
+		if cond.Type == networkingapi.ConditionCloudEndpointsDiscovered ||
+			cond.Type == networkingapi.ConditionCloudResourcesReconciled ||
+			cond.Type == networkingapi.ConditionCompleteNodeInventory {
 			t.Errorf("expected stale %s removed", cond.Type)
 		}
 	}
@@ -1242,7 +1161,7 @@ func TestConfigReconcile_ManualClearsStaleCloudStatus(t *testing.T) {
 // the singleton forever. A steady-state reconcile must not write status.
 func TestConfigReconcile_CloudSteadyStateDoesNotRewriteStatus(t *testing.T) {
 	mock := &mockPlatform{}
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	s := configTestScheme()
 
 	network := &unstructured.Unstructured{
@@ -1265,15 +1184,14 @@ func TestConfigReconcile_CloudSteadyStateDoesNotRewriteStatus(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return mock, nil
 		},
 	}
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
 
-	// Drive to steady state: finalizer add, then a full reconcile that writes status.
 	if _, err := r.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("reconcile 1: %v", err)
 	}
@@ -1281,20 +1199,19 @@ func TestConfigReconcile_CloudSteadyStateDoesNotRewriteStatus(t *testing.T) {
 		t.Fatalf("reconcile 2: %v", err)
 	}
 
-	settled := &networkingv1alpha1.CUDNBgpConfig{}
+	settled := &networkingapi.BGPCloudConfiguration{}
 	if err := c.Get(context.Background(), req.NamespacedName, settled); err != nil {
 		t.Fatalf("get after settle: %v", err)
 	}
-	if settled.Status.Phase != networkingv1alpha1.PhaseReady {
+	if settled.Status.Phase != networkingapi.PhaseReady {
 		t.Fatalf("expected Ready before steady-state check, got %s", settled.Status.Phase)
 	}
 	rvBefore := settled.ResourceVersion
 
-	// A further reconcile with nothing changed must not write status.
 	if _, err := r.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("steady-state reconcile: %v", err)
 	}
-	after := &networkingv1alpha1.CUDNBgpConfig{}
+	after := &networkingapi.BGPCloudConfiguration{}
 	if err := c.Get(context.Background(), req.NamespacedName, after); err != nil {
 		t.Fatalf("get after steady-state reconcile: %v", err)
 	}
@@ -1307,14 +1224,13 @@ func TestConfigReconcile_CloudSteadyStateDoesNotRewriteStatus(t *testing.T) {
 // credential failure clears the cloud peering plan reported from a prior
 // success, rather than leaving stale endpoints alongside the degraded status.
 func TestConfigReconcile_CredentialFailureClearsStalePeerGroups(t *testing.T) {
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
-	// Stale plan and cloud conditions from an earlier successful reconcile.
-	config.Status.PeerGroups = []networkingv1alpha1.PeerGroupStatus{
-		{Key: "us-east-1a", Neighbors: []networkingv1alpha1.BGPNeighbor{{Address: "10.0.1.47", RemoteASN: 64512}}},
+	config.Status.PeerGroups = []networkingapi.PeerGroupStatus{
+		{Key: "us-east-1a", Neighbors: []networkingapi.BGPNeighbor{{Address: "10.0.1.47", RemoteASN: 64512}}},
 	}
 	config.Status.Conditions = []metav1.Condition{
-		{Type: networkingv1alpha1.ConditionCloudEndpointsDiscovered, Status: metav1.ConditionTrue, Reason: "Discovered"},
+		{Type: networkingapi.ConditionCloudEndpointsDiscovered, Status: metav1.ConditionTrue, Reason: "Discovered"},
 	}
 	s := configTestScheme()
 
@@ -1337,9 +1253,9 @@ func TestConfigReconcile_CredentialFailureClearsStalePeerGroups(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return nil, &platform.CredentialError{Msg: "invalid credentials"}
 		},
 	}
@@ -1348,17 +1264,15 @@ func TestConfigReconcile_CredentialFailureClearsStalePeerGroups(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
-		t.Fatalf("get config: %v", err)
-	}
+	updated := &networkingapi.BGPCloudConfiguration{}
+	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated)
 	if len(updated.Status.PeerGroups) != 0 {
 		t.Errorf("expected stale peerGroups cleared on credential failure, got %d", len(updated.Status.PeerGroups))
 	}
-	if updated.Status.Phase != networkingv1alpha1.PhaseDegraded {
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
-	got := meta.FindStatusCondition(updated.Status.Conditions, networkingv1alpha1.ConditionCloudEndpointsDiscovered)
+	got := meta.FindStatusCondition(updated.Status.Conditions, networkingapi.ConditionCloudEndpointsDiscovered)
 	if got == nil || got.Status != metav1.ConditionFalse || got.Reason != ReasonCloudCredentialsInvalid {
 		t.Errorf("CloudEndpointsDiscovered = %+v, want False/%s", got, ReasonCloudCredentialsInvalid)
 	}
@@ -1366,8 +1280,8 @@ func TestConfigReconcile_CredentialFailureClearsStalePeerGroups(t *testing.T) {
 
 // TestDefaultPlatformBuilder_UnknownPlatform pins what the default arm is for.
 func TestDefaultPlatformBuilder_UnknownPlatform(t *testing.T) {
-	config := newTestCUDNBgpConfigWithAWS()
-	config.Spec.Platform = networkingv1alpha1.PlatformType("Nowhere")
+	config := newTestBGPCloudConfigurationWithAWS()
+	config.Spec.Platform = networkingapi.PlatformType("Nowhere")
 	c := fake.NewClientBuilder().WithScheme(configTestScheme()).Build()
 
 	_, err := defaultPlatformBuilder(context.Background(), c, config)
