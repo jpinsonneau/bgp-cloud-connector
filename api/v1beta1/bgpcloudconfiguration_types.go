@@ -225,6 +225,7 @@ type PeerGroupStatus struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// Neighbors are the addresses the router nodes in this group peer with.
 	// +optional
+	// +kubebuilder:validation:MaxItems=8
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=8
 	Neighbors []BGPNeighbor `json:"neighbors,omitempty"`
@@ -245,6 +246,7 @@ type BGPConfig struct {
 	// Required when platform is Manual; must not be set on other platforms
 	// where peer groups are auto-discovered.
 	// +optional
+	// +kubebuilder:validation:MaxItems=16
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=16
 	PeerGroups []PeerGroup `json:"peerGroups,omitempty"`
@@ -297,6 +299,7 @@ type BGPCloudConfigurationStatus struct {
 	// platform: Manual, where the plan is declared in spec.bgp.peerGroups
 	// rather than discovered.
 	// +optional
+	// +kubebuilder:validation:MaxItems=16
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=16
 	PeerGroups []PeerGroupStatus `json:"peerGroups,omitempty"`
