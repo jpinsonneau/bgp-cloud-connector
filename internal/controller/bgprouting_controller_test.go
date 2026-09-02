@@ -39,8 +39,12 @@ import (
 
 func routingTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	_ = networkingapi.AddToScheme(s)
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		panic(err)
+	}
+	if err := networkingapi.AddToScheme(s); err != nil {
+		panic(err)
+	}
 
 	s.AddKnownTypeWithName(ClusterUDNGVK.GroupVersion().WithKind("ClusterUserDefinedNetwork"), &unstructured.Unstructured{})
 	s.AddKnownTypeWithName(ClusterUDNGVK.GroupVersion().WithKind("ClusterUserDefinedNetworkList"), &unstructured.UnstructuredList{})
@@ -124,7 +128,9 @@ func TestRoutingReconcile_FullReconcile(t *testing.T) {
 	}
 
 	updated := &networkingapi.BGPRouting{}
-	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
+		t.Fatalf("failed to get updated BGPRouting: %v", err)
+	}
 	if updated.Status.Phase != networkingapi.PhaseReady {
 		t.Errorf("expected Ready, got %s", updated.Status.Phase)
 	}
@@ -236,7 +242,9 @@ func TestRoutingReconcile_NoNamespace(t *testing.T) {
 	}
 
 	updated := &networkingapi.BGPRouting{}
-	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
+		t.Fatalf("failed to get updated BGPRouting: %v", err)
+	}
 	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
@@ -362,7 +370,9 @@ func TestRoutingReconcile_DuplicateNetworkName(t *testing.T) {
 	}
 
 	updated := &networkingapi.BGPRouting{}
-	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
+		t.Fatalf("failed to get updated BGPRouting: %v", err)
+	}
 	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}
@@ -410,7 +420,9 @@ func TestRoutingReconcile_DuplicateNetwork_RecoversOnConflictDelete(t *testing.T
 		t.Errorf("expected no requeue for terminal DuplicateNetwork, got %v", result.RequeueAfter)
 	}
 	before := &networkingapi.BGPRouting{}
-	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, before)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, before); err != nil {
+		t.Fatalf("failed to get BGPRouting before recovery: %v", err)
+	}
 	if before.Status.Phase != networkingapi.PhaseDegraded {
 		t.Fatalf("expected Degraded after duplicate, got %s", before.Status.Phase)
 	}
@@ -430,7 +442,9 @@ func TestRoutingReconcile_DuplicateNetwork_RecoversOnConflictDelete(t *testing.T
 	}
 
 	recovered := &networkingapi.BGPRouting{}
-	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, recovered)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, recovered); err != nil {
+		t.Fatalf("failed to get recovered BGPRouting: %v", err)
+	}
 	if recovered.Status.Phase != networkingapi.PhaseReady {
 		t.Errorf("expected Ready after conflict resolution, got %s", recovered.Status.Phase)
 	}
@@ -569,7 +583,9 @@ func TestRoutingReconcile_CUDNSpecInvalid_NoRequeue(t *testing.T) {
 	}
 
 	updated := &networkingapi.BGPRouting{}
-	_ = c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
+		t.Fatalf("failed to get updated BGPRouting: %v", err)
+	}
 	if updated.Status.Phase != networkingapi.PhaseDegraded {
 		t.Errorf("expected Degraded, got %s", updated.Status.Phase)
 	}

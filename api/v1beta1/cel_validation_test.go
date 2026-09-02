@@ -18,6 +18,7 @@ package v1beta1_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,7 +64,12 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
-	_ = testEnv.Stop()
+	if err := testEnv.Stop(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to stop test environment: %v\n", err)
+		if code == 0 {
+			code = 1
+		}
+	}
 	os.Exit(code)
 }
 
