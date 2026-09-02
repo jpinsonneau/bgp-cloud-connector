@@ -59,7 +59,7 @@ spec:
     owned:
     - description: BGPCloudConfiguration is the singleton cluster-scoped BGP infrastructure
         configuration.
-      displayName: BGP Cloud Configuration
+      displayName: BGPCloud Configuration
       kind: BGPCloudConfiguration
       name: bgpcloudconfigurations.networking.openshift.io
       version: v1beta1
@@ -67,7 +67,7 @@ spec:
         BGPRouting declares a single network to advertise via BGP.
         Users must pre-create and label namespaces; the operator manages only the
         ClusterUserDefinedNetwork and RouteAdvertisements.
-      displayName: BGP Routing
+      displayName: BGPRouting
       kind: BGPRouting
       name: bgproutings.networking.openshift.io
       version: v1beta1

@@ -5,8 +5,8 @@ metadata:
     alm-examples: |-
       [
         {
-          "apiVersion": "networking.openshift.io/v1alpha1",
-          "kind": "CUDNBgpConfig",
+          "apiVersion": "networking.openshift.io/v1beta1",
+          "kind": "BGPCloudConfiguration",
           "metadata": {
             "name": "cluster"
           },
@@ -28,8 +28,8 @@ metadata:
           }
         },
         {
-          "apiVersion": "networking.openshift.io/v1alpha1",
-          "kind": "CUDNBgpRouting",
+          "apiVersion": "networking.openshift.io/v1beta1",
+          "kind": "BGPRouting",
           "metadata": {
             "name": "cudn1"
           },
@@ -57,7 +57,7 @@ metadata:
     features.operators.openshift.io/token-auth-aws: "true"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    operatorframework.io/suggested-namespace: openshift-cudn-bgp-routing
+    operatorframework.io/suggested-namespace: bgp-cloud-connector
     operators.openshift.io/valid-subscription: '["OpenShift Kubernetes Engine", "OpenShift
       Container Platform", "OpenShift Platform Plus"]'
     operators.operatorframework.io/builder: operator-sdk-v1.42.2
@@ -68,20 +68,20 @@ spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
-    - description: CUDNBgpConfig is the singleton cluster-scoped BGP infrastructure
+    - description: BGPCloudConfiguration is the singleton cluster-scoped BGP infrastructure
         configuration.
-      displayName: CUDNBgp Config
-      kind: CUDNBgpConfig
-      name: cudnbgpconfigs.networking.openshift.io
-      version: v1alpha1
+      displayName: BGPCloud Configuration
+      kind: BGPCloudConfiguration
+      name: bgpcloudconfigurations.networking.openshift.io
+      version: v1beta1
     - description: |-
-        CUDNBgpRouting declares a single network to advertise via BGP.
+        BGPRouting declares a single network to advertise via BGP.
         Users must pre-create and label namespaces; the operator manages only the
         ClusterUserDefinedNetwork and RouteAdvertisements.
-      displayName: CUDNBgp Routing
-      kind: CUDNBgpRouting
-      name: cudnbgproutings.networking.openshift.io
-      version: v1alpha1
+      displayName: BGPRouting
+      kind: BGPRouting
+      name: bgproutings.networking.openshift.io
+      version: v1beta1
   description: |
     **Important:** This is a preview release for internal testing purposes only.
     It is not supported by Red Hat and is not intended for production use by customers.
@@ -166,8 +166,8 @@ spec:
         - apiGroups:
           - networking.openshift.io
           resources:
-          - cudnbgpconfigs
-          - cudnbgproutings
+          - bgpcloudconfigurations
+          - bgproutings
           verbs:
           - create
           - delete
@@ -179,15 +179,15 @@ spec:
         - apiGroups:
           - networking.openshift.io
           resources:
-          - cudnbgpconfigs/finalizers
-          - cudnbgproutings/finalizers
+          - bgpcloudconfigurations/finalizers
+          - bgproutings/finalizers
           verbs:
           - update
         - apiGroups:
           - networking.openshift.io
           resources:
-          - cudnbgpconfigs/status
-          - cudnbgproutings/status
+          - bgpcloudconfigurations/status
+          - bgproutings/status
           verbs:
           - get
           - patch
