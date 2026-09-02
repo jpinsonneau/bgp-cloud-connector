@@ -681,7 +681,7 @@ func TestConfigReconcile_AWSDiscovery_TransientStillRequeues(t *testing.T) {
 // Degraded in that window sends people looking for a problem that is
 // about to solve itself.
 func TestConfigReconcile_CredentialsPendingIsAWait(t *testing.T) {
-	config := newTestCUDNBgpConfigWithAWS()
+	config := newTestBGPCloudConfigurationWithAWS()
 	config.Finalizers = []string{ConfigFinalizerName}
 	s := configTestScheme()
 
@@ -704,9 +704,9 @@ func TestConfigReconcile_CredentialsPendingIsAWait(t *testing.T) {
 		WithStatusSubresource(config).
 		Build()
 
-	r := &CUDNBgpConfigReconciler{
+	r := &BGPCloudConfigurationReconciler{
 		Client: c, Scheme: s,
-		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingv1alpha1.CUDNBgpConfig) (platform.CloudPlatform, error) {
+		PlatformBuilder: func(_ context.Context, _ client.Client, _ *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error) {
 			return nil, fmt.Errorf("%w: ROLEARN must be set", platform.ErrCredentialsPending)
 		},
 	}
@@ -719,18 +719,18 @@ func TestConfigReconcile_CredentialsPendingIsAWait(t *testing.T) {
 		t.Errorf("expected a 10s requeue, got %v", result.RequeueAfter)
 	}
 
-	updated := &networkingv1alpha1.CUDNBgpConfig{}
+	updated := &networkingapi.BGPCloudConfiguration{}
 	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, updated); err != nil {
 		// Every assertion below reads this object. Left unchecked, a failed
 		// read leaves it zero and the loop over its conditions finds nothing
 		// to assert, so the test passes without having looked at anything.
-		t.Fatalf("reading back the CUDNBgpConfig: %v", err)
+		t.Fatalf("reading back the BGPCloudConfiguration: %v", err)
 	}
-	if updated.Status.Phase == networkingv1alpha1.PhaseDegraded {
-		t.Errorf("expected %s, got Degraded", networkingv1alpha1.PhaseConfiguring)
+	if updated.Status.Phase == networkingapi.PhaseDegraded {
+		t.Errorf("expected %s, got Degraded", networkingapi.PhaseConfiguring)
 	}
 	for _, cond := range updated.Status.Conditions {
-		if cond.Type == networkingv1alpha1.ConditionCloudEndpointsDiscovered {
+		if cond.Type == networkingapi.ConditionCloudEndpointsDiscovered {
 			if cond.Status != metav1.ConditionFalse {
 				t.Errorf("expected CloudEndpointsDiscovered=False, got %s", cond.Status)
 			}
