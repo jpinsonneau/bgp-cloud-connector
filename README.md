@@ -80,7 +80,7 @@ When AWS platform integration is configured, the operator performs additional ac
 
 **Auto-discovery:** The operator discovers Route Server endpoints, their ENI addresses (BGP neighbor IPs), availability zones, and the Route Server's remote ASN automatically from the provided Route Server IDs. The user does not need to specify per-AZ endpoint IDs or neighbor addresses — the operator derives them via `DescribeRouteServerEndpoints` (endpoint ID + ENI address + subnet), `DescribeSubnets` (subnet → AZ mapping), and `DescribeRouteServers` (remote ASN). The peering plan it arrives at is written to `status.peerGroups` for observability. This also drives FRR configuration generation — the operator creates one FRRConfiguration per discovered AZ with the discovered neighbor addresses.
 
-Route Server peers are created **per-AZ** — each BGP-enabled worker node is peered with its local AZ's Route Server endpoints. Peers are tagged with `managed-by: cudn-bgp-routing-operator/<infrastructureName>` for lifecycle management, where `<infrastructureName>` is read automatically from the OpenShift `Infrastructure/cluster` object (`status.infrastructureName`). This cluster-scoped tag ensures multiple clusters sharing the same VPC Route Server do not interfere with each other's peers. If a peer already exists at a desired IP but was not created by the operator (e.g. created manually or by Terraform), the operator adopts it by adding the `managed-by` tag rather than attempting to create a duplicate.
+Route Server peers are created **per-AZ** — each BGP-enabled worker node is peered with its local AZ's Route Server endpoints. Peers are tagged with `managed-by: bgp-cloud-connector/<infrastructureName>` for lifecycle management, where `<infrastructureName>` is read automatically from the OpenShift `Infrastructure/cluster` object (`status.infrastructureName`). This cluster-scoped tag ensures multiple clusters sharing the same VPC Route Server do not interfere with each other's peers. If a peer already exists at a desired IP but was not created by the operator (e.g. created manually or by Terraform), the operator adopts it by adding the `managed-by` tag rather than attempting to create a duplicate.
 
 #### AWS authentication
 
@@ -88,7 +88,7 @@ The operator gets its AWS credentials in one of two ways, and works out which by
 
 **Where the pod has credentials.** On ROSA, and on any cluster where you have annotated the operator's ServiceAccount with an IAM role ARN, the pod identity webhook injects a web identity token at pod creation and the SDK's default chain resolves it. Nothing static is stored and the operator asks the cluster for nothing. The steps below set this up.
 
-**Where it does not.** The operator creates a `CredentialsRequest` named `cudn-bgp-routing-aws` for itself, carrying exactly the permissions in the table above, and reads the `credentials` key of the secret the cloud credential operator writes into its own namespace. That key is a shared-credentials ini file, and CCO writes one whatever mode the cluster is in, which is why this single path serves both kinds:
+**Where it does not.** The operator creates a `CredentialsRequest` named `bgp-cloud-connector-aws` for itself, carrying exactly the permissions in the table above, and reads the `credentials` key of the secret the cloud credential operator writes into its own namespace. That key is a shared-credentials ini file, and CCO writes one whatever mode the cluster is in, which is why this single path serves both kinds:
 
 - **A cluster that mints** (ordinary IPI, `credentialsMode` unset or `Mint`) needs nothing set up. CCO creates an IAM user and puts its key pair in the secret. The `BGPCloudConfiguration` reports `CloudEndpointsDiscovered=False` with reason `WaitingForCloudCredentials` for the few seconds this takes, then proceeds.
 - **A cluster that federates** (`credentialsMode: Manual` with an OIDC provider, which is what `ccoctl` installs) cannot mint anything. Give the operator an IAM role ARN in the `ROLEARN` environment variable and it adds `stsIAMRoleARN` and `cloudTokenPath` to its request; CCO then writes a secret naming that role and the token this operator projects at `/var/run/secrets/openshift/serviceaccount/token`. Installing from OperatorHub, the console prompts for the role ARN and sets `ROLEARN` for you, because the CSV declares `features.operators.openshift.io/token-auth-aws`. Installing by hand, put it in the Subscription:
@@ -114,7 +114,7 @@ Setting `ROLEARN` after the operator has already asked is fine: it reconciles it
 OIDC_PROVIDER=$(rosa describe cluster -c <cluster-name> -o json | jq -r '.aws.sts.oidc_endpoint_url' | sed 's|https://||')
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-aws iam create-role --role-name cudn-bgp-operator \
+aws iam create-role --role-name bgp-cloud-connector \
   --assume-role-policy-document '{
     "Version": "2012-10-17",
     "Statement": [{
@@ -123,7 +123,7 @@ aws iam create-role --role-name cudn-bgp-operator \
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "'$OIDC_PROVIDER':sub": "system:serviceaccount:openshift-cudn-bgp-routing:openshift-cudn-bgp-routing-controller-manager"
+          "'$OIDC_PROVIDER':sub": "system:serviceaccount:openshift-bgp-cloud-connector:openshift-bgp-cloud-connector-controller-manager"
         }
       }
     }]
@@ -133,8 +133,8 @@ aws iam create-role --role-name cudn-bgp-operator \
 **Step 2 — Attach the required permissions policy:**
 
 ```bash
-aws iam put-role-policy --role-name cudn-bgp-operator \
-  --policy-name cudn-bgp-operator-policy \
+aws iam put-role-policy --role-name bgp-cloud-connector \
+  --policy-name bgp-cloud-connector-policy \
   --policy-document '{
     "Version": "2012-10-17",
     "Statement": [
@@ -161,9 +161,9 @@ aws iam put-role-policy --role-name cudn-bgp-operator \
 **Step 3 — Annotate the operator's ServiceAccount:**
 
 ```bash
-oc annotate serviceaccount openshift-cudn-bgp-routing-controller-manager \
-  -n openshift-cudn-bgp-routing \
-  eks.amazonaws.com/role-arn=arn:aws:iam::${AWS_ACCOUNT_ID}:role/cudn-bgp-operator
+oc annotate serviceaccount openshift-bgp-cloud-connector-controller-manager \
+  -n openshift-bgp-cloud-connector \
+  eks.amazonaws.com/role-arn=arn:aws:iam::${AWS_ACCOUNT_ID}:role/bgp-cloud-connector
 ```
 
 The OIDC webhook automatically injects `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` environment variables into the operator pod. The AWS SDK's default credential chain picks these up — no explicit credential configuration is needed in the CR.
@@ -171,7 +171,7 @@ The OIDC webhook automatically injects `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKE
 **Important:** The OIDC webhook only injects credentials at **pod creation time**. If the operator is already running when you complete the IRSA setup (or if you correct a misconfigured IAM role or ServiceAccount annotation), the running pod will not pick up the new credentials. You must restart the operator after making credential changes:
 
 ```bash
-oc rollout restart deployment/openshift-cudn-bgp-routing-controller-manager -n openshift-cudn-bgp-routing
+oc rollout restart deployment/openshift-bgp-cloud-connector-controller-manager -n openshift-bgp-cloud-connector
 ```
 
 The operator reports credential issues as `CloudCredentialsInvalid` in the `BGPCloudConfiguration` status. If you see this condition, verify the IAM role trust policy and permissions, then restart the operator.
@@ -203,10 +203,10 @@ Currently only AWS platform integration is implemented but the design allows for
 
 | Field | Value |
 |:---|:---|
-| Package name | `cudn-bgp-routing-operator` |
+| Package name | `bgp-cloud-connector` |
 | Default channel | `alpha` (moves to `stable` at GA) |
 | Install modes | OwnNamespace, SingleNamespace |
-| Target namespace | `openshift-cudn-bgp-routing` |
+| Target namespace | `openshift-bgp-cloud-connector` |
 | Min OCP version | 4.21 (frr-k8s + CUDN + RouteAdvertisements) |
 | Categories | Networking |
 | Provider | Red Hat |
@@ -385,10 +385,10 @@ The generated FRRConfigurations are identical regardless of whether cloud integr
 apiVersion: frrk8s.metallb.io/v1beta1
 kind: FRRConfiguration
 metadata:
-  name: cudn-bgp-1
+  name: bgp-cc-1
   namespace: openshift-frr-k8s
   labels:
-    app.kubernetes.io/managed-by: cudn-bgp-routing-operator
+    app.kubernetes.io/managed-by: bgp-cloud-connector
 spec:
   nodeSelector:
     matchLabels:
@@ -415,10 +415,10 @@ spec:
 apiVersion: frrk8s.metallb.io/v1beta1
 kind: FRRConfiguration
 metadata:
-  name: cudn-bgp-2
+  name: bgp-cc-2
   namespace: openshift-frr-k8s
   labels:
-    app.kubernetes.io/managed-by: cudn-bgp-routing-operator
+    app.kubernetes.io/managed-by: bgp-cloud-connector
 spec:
   nodeSelector:
     matchLabels:
@@ -445,10 +445,10 @@ spec:
 apiVersion: frrk8s.metallb.io/v1beta1
 kind: FRRConfiguration
 metadata:
-  name: cudn-bgp-3
+  name: bgp-cc-3
   namespace: openshift-frr-k8s
   labels:
-    app.kubernetes.io/managed-by: cudn-bgp-routing-operator
+    app.kubernetes.io/managed-by: bgp-cloud-connector
 spec:
   nodeSelector:
     matchLabels:
@@ -498,7 +498,7 @@ metadata:
   name: cluster-udn-prod
   labels:
     advertise: "true"
-    app.kubernetes.io/managed-by: cudn-bgp-routing-operator
+    app.kubernetes.io/managed-by: bgp-cloud-connector
 spec:
   namespaceSelector:
     matchLabels:
@@ -519,9 +519,9 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: RouteAdvertisements
 metadata:
-  name: cudn-bgp-route-advertisements
+  name: bgp-cc-route-advertisements
   labels:
-    app.kubernetes.io/managed-by: cudn-bgp-routing-operator
+    app.kubernetes.io/managed-by: bgp-cloud-connector
 spec:
   nodeSelector: {}
   frrConfigurationSelector: {}
@@ -623,7 +623,7 @@ Phase 1: Validate Namespace + Create CUDN
           │
           ▼
 Phase 2: Ensure Route Advertisements
-  ├── Ensure a single shared RouteAdvertisements ("cudn-bgp-route-advertisements") exists
+  ├── Ensure a single shared RouteAdvertisements ("bgp-cc-route-advertisements") exists
   │   (created on first BGPRouting reconcile, reused by all)
   │   networkSelector: advertise=true (matches all operator-managed CUDNs)
   ├── advertisements: [PodNetwork]
@@ -678,7 +678,7 @@ On any `Degraded` state, the controller automatically retries every 30 seconds.
 | BGPCloudConfiguration | `Node` (label/address/providerID changes) | `cluster` singleton |
 | BGPRouting | `ClusterUserDefinedNetwork` (label-filtered) | owning `BGPRouting` CR |
 
-Only resources labeled `app.kubernetes.io/managed-by: cudn-bgp-routing-operator` trigger reconciliation. In addition, both controllers re-reconcile every 5 minutes in the `Ready` state as a safety-net backstop.
+Only resources labeled `app.kubernetes.io/managed-by: bgp-cloud-connector` trigger reconciliation. In addition, both controllers re-reconcile every 5 minutes in the `Ready` state as a safety-net backstop.
 
 `FRRConfiguration` and `RouteAdvertisements` are deliberately not watched. Neither CRD exists until the operator patches the Network operator, so watching them would mean the manager could only start on a cluster where its own work had already been done: it would fail to sync those caches and exit. Drift on the `FRRConfigurations` and the shared `RouteAdvertisements` the operator writes is corrected at the next resync instead, so it is noticed within `--resync-interval` rather than immediately.
 
@@ -737,19 +737,19 @@ oc wait route/default-route -n openshift-image-registry --for=jsonpath='{.status
 
 ```bash
 REGISTRY=$(oc get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}')
-IMG=$REGISTRY/openshift-cudn-bgp-routing/operator:dev
+IMG=$REGISTRY/openshift-bgp-cloud-connector/operator:dev
 make image-build CONTAINER_TOOL=podman IMG=$IMG
 ```
 
 3. Push the image and deploy:
 
 ```bash
-oc create namespace openshift-cudn-bgp-routing --dry-run=client -o yaml | oc apply -f -
-oc create sa registry-push -n openshift-cudn-bgp-routing 2>/dev/null
-oc adm policy add-role-to-user registry-editor -z registry-push -n openshift-cudn-bgp-routing
-podman login $REGISTRY --tls-verify=false -u unused -p $(oc create token registry-push -n openshift-cudn-bgp-routing)
+oc create namespace openshift-bgp-cloud-connector --dry-run=client -o yaml | oc apply -f -
+oc create sa registry-push -n openshift-bgp-cloud-connector 2>/dev/null
+oc adm policy add-role-to-user registry-editor -z registry-push -n openshift-bgp-cloud-connector
+podman login $REGISTRY --tls-verify=false -u unused -p $(oc create token registry-push -n openshift-bgp-cloud-connector)
 make image-push CONTAINER_TOOL=podman IMG=$IMG
-make deploy IMG=image-registry.openshift-image-registry.svc:5000/openshift-cudn-bgp-routing/operator:dev
+make deploy IMG=image-registry.openshift-image-registry.svc:5000/openshift-bgp-cloud-connector/operator:dev
 ```
 
 4. Re-deploy after code changes (rebuild, push, and restart):
@@ -757,9 +757,9 @@ make deploy IMG=image-registry.openshift-image-registry.svc:5000/openshift-cudn-
 ```bash
 make image-build CONTAINER_TOOL=podman IMG=$IMG
 make image-push CONTAINER_TOOL=podman IMG=$IMG
-oc patch deployment openshift-cudn-bgp-routing-controller-manager -n openshift-cudn-bgp-routing \
+oc patch deployment openshift-bgp-cloud-connector-controller-manager -n openshift-bgp-cloud-connector \
   -p '{"spec":{"template":{"spec":{"containers":[{"name":"manager","imagePullPolicy":"Always"}]}}}}'
-oc rollout restart deployment/openshift-cudn-bgp-routing-controller-manager -n openshift-cudn-bgp-routing
+oc rollout restart deployment/openshift-bgp-cloud-connector-controller-manager -n openshift-bgp-cloud-connector
 ```
 
 5. Create the CRs for your environment:

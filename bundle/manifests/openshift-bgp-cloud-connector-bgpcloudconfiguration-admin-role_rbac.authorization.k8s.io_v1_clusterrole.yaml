@@ -5,19 +5,17 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: bgp-cloud-connector
-  name: openshift-cudn-bgp-routing-bgprouting-viewer-role
+  name: openshift-bgp-cloud-connector-bgpcloudconfiguration-admin-role
 rules:
 - apiGroups:
   - networking.openshift.io
   resources:
-  - bgproutings
+  - bgpcloudconfigurations
   verbs:
-  - get
-  - list
-  - watch
+  - '*'
 - apiGroups:
   - networking.openshift.io
   resources:
-  - bgproutings/status
+  - bgpcloudconfigurations/status
   verbs:
   - get

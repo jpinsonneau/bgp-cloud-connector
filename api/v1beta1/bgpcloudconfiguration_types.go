@@ -312,6 +312,7 @@ type BGPCloudConfigurationStatus struct {
 // +kubebuilder:printcolumn:name="LocalASN",type="integer",JSONPath=".spec.bgp.localASN"
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +operator-sdk:csv:customresourcedefinitions:displayName="BGP Cloud Configuration"
 
 // BGPCloudConfiguration is the singleton cluster-scoped BGP infrastructure configuration.
 type BGPCloudConfiguration struct {

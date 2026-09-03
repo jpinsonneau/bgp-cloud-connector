@@ -62,7 +62,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=infrastructures,verbs=get
 // +kubebuilder:rbac:groups=cloudcredential.openshift.io,resources=credentialsrequests,verbs=get;list;watch;create;update
-// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=cudn-bgp-routing-aws-credentials,verbs=get,namespace=openshift-cudn-bgp-routing
+// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=bgp-cloud-connector-aws-credentials,verbs=get,namespace=openshift-bgp-cloud-connector
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;delete;update;patch
 
 type PlatformBuilderFunc func(ctx context.Context, c client.Client, config *networkingapi.BGPCloudConfiguration) (platform.CloudPlatform, error)

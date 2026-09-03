@@ -348,7 +348,7 @@ bundle-build: bundle ## Build the bundle image.
 bundle-push: ## Push the bundle image.
 	$(CONTAINER_TOOL) push $(BUNDLE_IMG)
 
-BUNDLE_NAMESPACE ?= openshift-cudn-bgp-routing
+BUNDLE_NAMESPACE ?= openshift-bgp-cloud-connector
 BUNDLE_RUN_FLAGS ?= --namespace=$(BUNDLE_NAMESPACE) --install-mode=OwnNamespace
 BUNDLE_CLEANUP_FLAGS ?= --namespace=$(BUNDLE_NAMESPACE)
 

@@ -68,6 +68,7 @@ type BGPRoutingStatus struct {
 // +kubebuilder:printcolumn:name="Network",type="string",JSONPath=".spec.network.name"
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +operator-sdk:csv:customresourcedefinitions:displayName="BGP Routing"
 
 // BGPRouting declares a single network to advertise via BGP.
 // Users must pre-create and label namespaces; the operator manages only the

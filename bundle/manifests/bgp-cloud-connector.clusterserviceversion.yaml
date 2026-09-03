@@ -46,7 +46,7 @@ metadata:
     capabilities: Basic Install
     categories: Networking
     containerImage: controller:latest
-    createdAt: "2026-09-02T13:43:06Z"
+    createdAt: "2026-09-03T12:48:56Z"
     description: Automates L3 direct routing between CUDN Pod networks and external
       networks via BGP on OpenShift. Cloud platform aware — auto-discovers BGP infrastructure
       on AWS (VPC Route Server) and works on-premise with explicit configuration.
@@ -70,7 +70,7 @@ spec:
     owned:
     - description: BGPCloudConfiguration is the singleton cluster-scoped BGP infrastructure
         configuration.
-      displayName: BGPCloud Configuration
+      displayName: BGP Cloud Configuration
       kind: BGPCloudConfiguration
       name: bgpcloudconfigurations.networking.openshift.io
       version: v1beta1
@@ -78,7 +78,7 @@ spec:
         BGPRouting declares a single network to advertise via BGP.
         Users must pre-create and label namespaces; the operator manages only the
         ClusterUserDefinedNetwork and RouteAdvertisements.
-      displayName: BGPRouting
+      displayName: BGP Routing
       kind: BGPRouting
       name: bgproutings.networking.openshift.io
       version: v1beta1
@@ -213,18 +213,18 @@ spec:
           - subjectaccessreviews
           verbs:
           - create
-        serviceAccountName: openshift-cudn-bgp-routing-controller-manager
+        serviceAccountName: openshift-bgp-cloud-connector-controller-manager
       deployments:
       - label:
           app.kubernetes.io/managed-by: kustomize
-          app.kubernetes.io/name: openshift-cudn-bgp-routing
+          app.kubernetes.io/name: openshift-bgp-cloud-connector
           control-plane: controller-manager
-        name: openshift-cudn-bgp-routing-controller-manager
+        name: openshift-bgp-cloud-connector-controller-manager
         spec:
           replicas: 1
           selector:
             matchLabels:
-              app.kubernetes.io/name: openshift-cudn-bgp-routing
+              app.kubernetes.io/name: openshift-bgp-cloud-connector
               control-plane: controller-manager
           strategy: {}
           template:
@@ -232,7 +232,7 @@ spec:
               annotations:
                 kubectl.kubernetes.io/default-container: manager
               labels:
-                app.kubernetes.io/name: openshift-cudn-bgp-routing
+                app.kubernetes.io/name: openshift-bgp-cloud-connector
                 control-plane: controller-manager
             spec:
               containers:
@@ -288,7 +288,7 @@ spec:
                 runAsNonRoot: true
                 seccompProfile:
                   type: RuntimeDefault
-              serviceAccountName: openshift-cudn-bgp-routing-controller-manager
+              serviceAccountName: openshift-bgp-cloud-connector-controller-manager
               terminationGracePeriodSeconds: 10
               volumes:
               - emptyDir: {}
@@ -339,12 +339,12 @@ spec:
         - apiGroups:
           - ""
           resourceNames:
-          - cudn-bgp-routing-aws-credentials
+          - bgp-cloud-connector-aws-credentials
           resources:
           - secrets
           verbs:
           - get
-        serviceAccountName: openshift-cudn-bgp-routing-controller-manager
+        serviceAccountName: openshift-bgp-cloud-connector-controller-manager
     strategy: deployment
   installModes:
   - supported: true
