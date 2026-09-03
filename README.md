@@ -35,7 +35,7 @@ The overall solution (e.g. AWS) has two layers. The operator manages the in-clus
 ┌──────────────────────────────────────────────────────────────────────┐
 │  In-Cluster (Operator)                                               │
 │                                                                      │
-│  CUDNBgpConfig CR (singleton — BGP infra)                            │
+│  BGPCloudConfiguration CR (singleton — BGP infra)                            │
 │  ├── Patch Network.operator.openshift.io (enable FRR)                │
 │  ├── [if platform configured] Discover RS endpoints, neighbor IPs,   │
 │  │   remote ASN, and AZ mapping via cloud API                        │
@@ -43,7 +43,7 @@ The overall solution (e.g. AWS) has two layers. The operator manages the in-clus
 │  └── [if platform configured] Reconcile cloud networking on          │
 │       node changes (Route Server peers, SourceDestCheck, etc.)       │
 │                                                                      │
-│  CUDNBgpRouting CR (one per application project)                     │
+│  BGPRouting CR (one per application project)                     │
 │  ├── ClusterUserDefinedNetwork (targets user-labeled namespaces)     │
 │  └── Shared RouteAdvertisements (all CUDNs with advertise=true)      │
 └──────────────────────────────────────────────────────────────────────┘
@@ -69,7 +69,7 @@ Kubernetes has out-of-tree cloud controller managers (e.g. [cloud-provider-aws](
 
 ### AWS Platform
 
-When AWS platform integration is configured, the operator performs additional actions during `CUDNBgpConfig` reconciliation:
+When AWS platform integration is configured, the operator performs additional actions during `BGPCloudConfiguration` reconciliation:
 
 | Action | AWS API calls | Trigger |
 |:---|:---|:---|
@@ -90,7 +90,7 @@ The operator gets its AWS credentials in one of two ways, and works out which by
 
 **Where it does not.** The operator creates a `CredentialsRequest` named `cudn-bgp-routing-aws` for itself, carrying exactly the permissions in the table above, and reads the `credentials` key of the secret the cloud credential operator writes into its own namespace. That key is a shared-credentials ini file, and CCO writes one whatever mode the cluster is in, which is why this single path serves both kinds:
 
-- **A cluster that mints** (ordinary IPI, `credentialsMode` unset or `Mint`) needs nothing set up. CCO creates an IAM user and puts its key pair in the secret. The `CUDNBgpConfig` reports `CloudEndpointsDiscovered=False` with reason `WaitingForCloudCredentials` for the few seconds this takes, then proceeds.
+- **A cluster that mints** (ordinary IPI, `credentialsMode` unset or `Mint`) needs nothing set up. CCO creates an IAM user and puts its key pair in the secret. The `BGPCloudConfiguration` reports `CloudEndpointsDiscovered=False` with reason `WaitingForCloudCredentials` for the few seconds this takes, then proceeds.
 - **A cluster that federates** (`credentialsMode: Manual` with an OIDC provider, which is what `ccoctl` installs) cannot mint anything. Give the operator an IAM role ARN in the `ROLEARN` environment variable and it adds `stsIAMRoleARN` and `cloudTokenPath` to its request; CCO then writes a secret naming that role and the token this operator projects at `/var/run/secrets/openshift/serviceaccount/token`. Installing from OperatorHub, the console prompts for the role ARN and sets `ROLEARN` for you, because the CSV declares `features.operators.openshift.io/token-auth-aws`. Installing by hand, put it in the Subscription:
 
   ```yaml
@@ -105,7 +105,7 @@ The operator gets its AWS credentials in one of two ways, and works out which by
 
 Setting `ROLEARN` after the operator has already asked is fine: it reconciles its own `CredentialsRequest` rather than only creating it, so the role ARN is picked up on the next pass.
 
-**For IRSA, the cluster admin must complete the following steps before creating the `CUDNBgpConfig` CR with `spec.aws`:**
+**For IRSA, the cluster admin must complete the following steps before creating the `BGPCloudConfiguration` CR with `spec.aws`:**
 
 **Step 1 — Create an IAM role with a trust policy for the operator's ServiceAccount:**
 
@@ -174,7 +174,7 @@ The OIDC webhook automatically injects `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKE
 oc rollout restart deployment/openshift-cudn-bgp-routing-controller-manager -n openshift-cudn-bgp-routing
 ```
 
-The operator reports credential issues as `CloudCredentialsInvalid` in the `CUDNBgpConfig` status. If you see this condition, verify the IAM role trust policy and permissions, then restart the operator.
+The operator reports credential issues as `CloudCredentialsInvalid` in the `BGPCloudConfiguration` status. If you see this condition, verify the IAM role trust policy and permissions, then restart the operator.
 
 ### Multi-cloud extensibility
 
@@ -194,7 +194,7 @@ Currently only AWS platform integration is implemented but the design allows for
 | Enable FRR + routeAdvertisements | `oc patch` in shell script (step 6) | Controller patches Network CR on reconcile |
 | Wait for FRR readiness | `sleep 60`, retry on error (step 6) | Controller polls FRR namespace and pods, requeues every 10s until ready |
 | FRR BGP configuration | Single `FRRConfiguration` inline in script with all 6 neighbors hard-coded from `terraform output` — cross-AZ sessions fail (step 6) | One `FRRConfiguration` per AZ, neighbors and ASN auto-discovered from Route Server APIs |
-| Namespace + CUDN | `oc apply -f yamls/` (step 7) | User creates labeled namespaces; controller creates ClusterUserDefinedNetwork per CUDNBgpRouting CR |
+| Namespace + CUDN | `oc apply -f yamls/` (step 7) | User creates labeled namespaces; controller creates ClusterUserDefinedNetwork per BGPRouting CR |
 | RouteAdvertisements | `oc apply -f yamls/` (step 7) | Controller ensures a single shared RouteAdvertisements |
 | Route Server peers | Terraform creates all peers statically (step 4) | Controller creates per-AZ peers dynamically, adopts/removes on node changes |
 | Source/dest check | Terraform disables via shell script (step 4) | Controller disables on each BGP-enabled worker node's primary ENI |
@@ -212,7 +212,7 @@ Currently only AWS platform integration is implemented but the design allows for
 | Provider | Red Hat |
 
 **Required APIs:** `FRRConfiguration` (frrk8s.metallb.io/v1beta1), `ClusterUserDefinedNetwork` (k8s.ovn.org/v1), `RouteAdvertisements` (k8s.ovn.org/v1)
-**Owned APIs:** `CUDNBgpConfig`, `CUDNBgpRouting` (networking.openshift.io/v1alpha1)
+**Owned APIs:** `BGPCloudConfiguration`, `BGPRouting` (networking.openshift.io/v1beta1)
 
 > The operator constructs `ClusterUserDefinedNetwork`, `RouteAdvertisements`, and `FRRConfiguration` objects using `unstructured.Unstructured` rather than importing typed Go structs. The typed structs for CUDN and RouteAdvertisements live inside the monolithic `github.com/ovn-kubernetes/ovn-kubernetes/go-controller` module, which carries 100+ transitive dependencies (CNI plugins, netlink, kubevirt, the full `k8s.io/kubernetes` repo, etc.). Even `openshift/cluster-network-operator` avoids importing it for the same reason.
 
@@ -222,16 +222,16 @@ Currently only AWS platform integration is implemented but the design allows for
 
 Two CRDs with clear separation of concerns:
 
-- **`CUDNBgpConfig`** (singleton, cluster-scoped, **must be named `cluster`**) — shared BGP infrastructure. Owned by cluster admin.
-- **`CUDNBgpRouting`** (one per CUDN, cluster-scoped) — declares a single CUDN network. Owned by application teams.
+- **`BGPCloudConfiguration`** (singleton, cluster-scoped, **must be named `cluster`**) — shared BGP infrastructure. Owned by cluster admin.
+- **`BGPRouting`** (one per network, cluster-scoped) — declares a single network to advertise via BGP. Owned by application teams.
 
-### CUDNBgpConfig (singleton - without cloud integration - using PoC configuration)
+### BGPCloudConfiguration (singleton - without cloud integration - using PoC configuration)
 
 Under `platform: Manual`, `spec.bgp.peerGroups` is required: you provide explicit neighbour addresses and the node selector for each group.
 
 ```yaml
-apiVersion: networking.openshift.io/v1alpha1
-kind: CUDNBgpConfig
+apiVersion: networking.openshift.io/v1beta1
+kind: BGPCloudConfiguration
 metadata:
   name: cluster
 spec:
@@ -269,13 +269,13 @@ spec:
             remoteASN: 64512
 ```
 
-### CUDNBgpConfig (singleton - with AWS integration - using PoC configuration)
+### BGPCloudConfiguration (singleton - with AWS integration - using PoC configuration)
 
 `spec.platform` selects the cloud, and exactly one matching block is required: `platform: AWS` requires `spec.aws`, and `spec.bgp.peerGroups` is permitted only under `platform: Manual`. Both are enforced by CEL rather than by documentation. On a cloud the operator auto-discovers Route Server endpoints, BGP neighbour addresses, remote ASN and AZ mapping from the provided Route Server IDs.
 
 ```yaml
-apiVersion: networking.openshift.io/v1alpha1
-kind: CUDNBgpConfig
+apiVersion: networking.openshift.io/v1beta1
+kind: BGPCloudConfiguration
 metadata:
   name: cluster
 spec:
@@ -293,16 +293,16 @@ spec:
       - rs-0abc123456789abcd
 ```
 
-### CUDNBgpRouting (one per application project - using PoC configuration)
+### BGPRouting (one per application project - using PoC configuration)
 
 ```yaml
-apiVersion: networking.openshift.io/v1alpha1
-kind: CUDNBgpRouting
+apiVersion: networking.openshift.io/v1beta1
+kind: BGPRouting
 metadata:
   name: cudn1
 spec:
   network:
-    name: prod                       # CUDN selects namespaces with label cluster-udn=prod
+    name: prod                       # selects namespaces with label cluster-udn=prod
     subnets:
       - 10.100.0.0/16
 ```
@@ -310,8 +310,8 @@ spec:
 For dual-stack networks, specify both an IPv4 and an IPv6 subnet:
 
 ```yaml
-apiVersion: networking.openshift.io/v1alpha1
-kind: CUDNBgpRouting
+apiVersion: networking.openshift.io/v1beta1
+kind: BGPRouting
 metadata:
   name: cudn1
 spec:
@@ -326,7 +326,7 @@ spec:
 
 ### CRD field reference
 
-**CUDNBgpConfig** (cluster admin creates once):
+**BGPCloudConfiguration** (cluster admin creates once):
 
 | Field | Required | Description |
 |:---|:---|:---|
@@ -342,7 +342,7 @@ spec:
 | `spec.aws.region` | Under `platform: AWS` | AWS region where the ROSA cluster and Route Server are deployed. |
 | `spec.aws.routeServerIDs[]` | Under `platform: AWS` | Route Server IDs for auto-discovery. The operator discovers all endpoints, their ENI addresses (BGP neighbor IPs), AZs (via subnet), and remote ASN. From `terraform output`. |
 
-**CUDNBgpConfig status** (populated by the operator):
+**BGPCloudConfiguration status** (populated by the operator):
 
 | Field | Description |
 |:---|:---|
@@ -353,7 +353,7 @@ spec:
 | `status.peerGroups[].nodeSelector` | Narrows `spec.routerNodeSelector` to this group's nodes. |
 | `status.peerGroups[].neighbors[]` | The addresses this group's router nodes peer with. |
 
-**CUDNBgpRouting** (application teams create per project):
+**BGPRouting** (application teams create per project):
 
 | Field | Required | Description |
 |:---|:---|:---|
@@ -362,7 +362,7 @@ spec:
 
 ### Operator-generated resources
 
-#### Network operator patch (from CUDNBgpConfig)
+#### Network operator patch (from BGPCloudConfiguration)
 
 Applied regardless of whether cloud integration is configured.
 
@@ -377,7 +377,7 @@ spec:
       routeAdvertisements: Enabled
 ```
 
-#### FRRConfiguration (from CUDNBgpConfig — one per peer group)
+#### FRRConfiguration (from BGPCloudConfiguration — one per peer group)
 
 The generated FRRConfigurations are identical regardless of whether cloud integration is configured. The only difference is the source of the input data: with cloud integration, neighbor addresses, remote ASN, and AZ mapping are auto-discovered from the Route Server endpoints; under `platform: Manual` they come from the explicit `spec.bgp.peerGroups`. The `nodeSelector` is always `routerNodeSelector` merged with the group's node selector.
 
@@ -475,7 +475,7 @@ spec:
 
 > **Note on `disableMP: true`:** The frr-k8s CRD defaults `disableMP` to `false` when the field is omitted. The OVN-Kubernetes RouteAdvertisements controller validates it and rejects FRRConfigurations where `disableMP` is `false`. The operator therefore explicitly sets `disableMP: true` on every neighbor.
 
-Users must pre-create namespaces with the required labels before applying a CUDNBgpRouting CR. The `k8s.ovn.org/primary-user-defined-network` label must be set at creation time — OCP admission policy prevents adding it after the namespace exists.
+Users must pre-create namespaces with the required labels before applying a BGPRouting CR. The `k8s.ovn.org/primary-user-defined-network` label must be set at creation time — OCP admission policy prevents adding it after the namespace exists.
 
 ```yaml
 apiVersion: v1
@@ -487,9 +487,9 @@ metadata:
     cluster-udn: prod            # must match spec.network.name
 ```
 
-The following resources are generated from CUDNBgpRouting and are identical regardless of platform configuration:
+The following resources are generated from BGPRouting and are identical regardless of platform configuration:
 
-#### ClusterUserDefinedNetwork (from CUDNBgpRouting)
+#### ClusterUserDefinedNetwork (from BGPRouting)
 
 ```yaml
 apiVersion: k8s.ovn.org/v1
@@ -513,7 +513,7 @@ spec:
         - 10.100.0.0/16
 ```
 
-#### RouteAdvertisements (from CUDNBgpRouting — shared)
+#### RouteAdvertisements (from BGPRouting — shared)
 
 ```yaml
 apiVersion: k8s.ovn.org/v1
@@ -541,7 +541,7 @@ spec:
 
 Two controllers, one per CRD.
 
-### CUDNBgpConfig controller (singleton)
+### BGPCloudConfiguration controller (singleton)
 
 Reconciles the shared BGP infrastructure.
 
@@ -599,14 +599,14 @@ Phase 5: Reconcile AWS Resources (if spec.aws configured)
      phase: Ready
 ```
 
-**On deletion:** blocked by finalizer while any `CUDNBgpRouting` CR exists. Once all routing CRs are removed, the finalizer cleans up all FRRConfigurations and (if `spec.aws` configured) deletes all managed AWS Route Server peers. The Network operator patch (`additionalRoutingCapabilities: FRR` and `ovnKubernetesConfig.routeAdvertisements: Enabled`) is intentionally **not** reverted — disabling FRR at the cluster level could disrupt other consumers.
+**On deletion:** blocked by finalizer while any `BGPRouting` CR exists. Once all routing CRs are removed, the finalizer cleans up all FRRConfigurations and (if `spec.aws` configured) deletes all managed AWS Route Server peers. The Network operator patch (`additionalRoutingCapabilities: FRR` and `ovnKubernetesConfig.routeAdvertisements: Enabled`) is intentionally **not** reverted — disabling FRR at the cluster level could disrupt other consumers.
 
-### CUDNBgpRouting controller (per CUDN)
+### BGPRouting controller (per CUDN)
 
 Reconciles individual CUDN networks. Before executing phases, the controller runs two pre-checks in order:
 
-1. **Duplicate network name** — `spec.network.name` must be unique across all `CUDNBgpRouting` CRs. If another CR already claims the same name, the CR is immediately set to `Degraded` with reason `DuplicateNetwork`.
-2. **Config readiness** — `CUDNBgpConfig` named `cluster` must exist and be in phase `Ready`. If missing or not yet `Ready`, the routing CR remains in `Pending` phase (conditions are cleared) and requeues every 10 seconds.
+1. **Duplicate network name** — `spec.network.name` must be unique across all `BGPRouting` CRs. If another CR already claims the same name, the CR is immediately set to `Degraded` with reason `DuplicateNetwork`.
+2. **Config readiness** — `BGPCloudConfiguration` named `cluster` must exist and be in phase `Ready`. If missing or not yet `Ready`, the routing CR remains in `Pending` phase (conditions are cleared) and requeues every 10 seconds.
 
 ```
 Phase 1: Validate Namespace + Create CUDN
@@ -619,12 +619,12 @@ Phase 1: Validate Namespace + Create CUDN
   │   subnets from spec.network
   │   topology: Layer2, role: Primary, ipam.lifecycle: Persistent (hardcoded)
   │   label advertise: "true"
-  └── Condition: CUDNCreated
+  └── Condition: NetworkCreated
           │
           ▼
 Phase 2: Ensure Route Advertisements
   ├── Ensure a single shared RouteAdvertisements ("cudn-bgp-route-advertisements") exists
-  │   (created on first CUDNBgpRouting reconcile, reused by all)
+  │   (created on first BGPRouting reconcile, reused by all)
   │   networkSelector: advertise=true (matches all operator-managed CUDNs)
   ├── advertisements: [PodNetwork]
   └── Condition: RouteAdvertisementsCreated
@@ -633,20 +633,20 @@ Phase 2: Ensure Route Advertisements
      phase: Ready
 ```
 
-**On deletion:** delete the owned ClusterUserDefinedNetwork. The shared RouteAdvertisements is deleted only when the last CUDNBgpRouting CR is removed.
+**On deletion:** delete the owned ClusterUserDefinedNetwork. The shared RouteAdvertisements is deleted only when the last BGPRouting CR is removed.
 
 ### Status phases and error handling
 
-Both CRs use the same phase enum. `CUDNBgpRouting` follows `Pending` → `Configuring` → `Ready`; `CUDNBgpConfig` starts directly in `Configuring` (it has no prerequisites to wait for). Either CR enters `Degraded` on errors.
+Both CRs use the same phase enum. `BGPRouting` follows `Pending` → `Configuring` → `Ready`; `BGPCloudConfiguration` starts directly in `Configuring` (it has no prerequisites to wait for). Either CR enters `Degraded` on errors.
 
 | Phase | Meaning |
 |:---|:---|
-| `Pending` | CR accepted but prerequisites not met (e.g. `CUDNBgpConfig` not yet `Ready`) |
+| `Pending` | CR accepted but prerequisites not met (e.g. `BGPCloudConfiguration` not yet `Ready`) |
 | `Configuring` | Reconciliation in progress, phases executing |
 | `Ready` | All phases completed successfully |
 | `Degraded` | A phase failed — check `status.conditions` for details |
 
-**CUDNBgpConfig conditions:**
+**BGPCloudConfiguration conditions:**
 
 | Condition | Degraded Reason | Cause |
 |:---|:---|:---|
@@ -660,13 +660,13 @@ Both CRs use the same phase enum. `CUDNBgpRouting` follows `Pending` → `Config
 
 > Phase 2 also uses `FRRNamespaceReady=False` with reason `WaitingForFRR` when the FRR namespace or pods are not yet available. This is **not** `Degraded` — the CR stays in `Configuring` and requeues every 10 seconds.
 
-**CUDNBgpRouting conditions:**
+**BGPRouting conditions:**
 
 | Condition | Degraded Reason | Cause |
 |:---|:---|:---|
-| `CUDNCreated` | `DuplicateNetwork` | `spec.network.name` already claimed by another CUDNBgpRouting CR |
-| `CUDNCreated` | `NamespaceNotReady` | No namespace found with required labels (`k8s.ovn.org/primary-user-defined-network: ""` and `cluster-udn: <name>`) |
-| `CUDNCreated` | `CUDNFailed` | Failed to create/update the ClusterUserDefinedNetwork |
+| `NetworkCreated` | `DuplicateNetwork` | `spec.network.name` already claimed by another BGPRouting CR |
+| `NetworkCreated` | `NamespaceNotReady` | No namespace found with required labels (`k8s.ovn.org/primary-user-defined-network: ""` and `cluster-udn: <name>`) |
+| `NetworkCreated` | `CUDNFailed` | Failed to create/update the ClusterUserDefinedNetwork |
 | `RouteAdvertisementsCreated` | `RAFailed` | Failed to ensure the shared RouteAdvertisements |
 
 On any `Degraded` state, the controller automatically retries every 30 seconds.
@@ -675,8 +675,8 @@ On any `Degraded` state, the controller automatically retries every 30 seconds.
 
 | Controller | Watches | Triggers reconcile of |
 |:---|:---|:---|
-| CUDNBgpConfig | `Node` (label/address/providerID changes) | `cluster` singleton |
-| CUDNBgpRouting | `ClusterUserDefinedNetwork` (label-filtered) | owning `CUDNBgpRouting` CR |
+| BGPCloudConfiguration | `Node` (label/address/providerID changes) | `cluster` singleton |
+| BGPRouting | `ClusterUserDefinedNetwork` (label-filtered) | owning `BGPRouting` CR |
 
 Only resources labeled `app.kubernetes.io/managed-by: cudn-bgp-routing-operator` trigger reconciliation. In addition, both controllers re-reconcile every 5 minutes in the `Ready` state as a safety-net backstop.
 
@@ -685,8 +685,8 @@ Only resources labeled `app.kubernetes.io/managed-by: cudn-bgp-routing-operator`
 Inspect the failing condition for the root cause:
 
 ```bash
-oc get cudnbgpconfig cluster -o jsonpath='{.status.conditions}' | jq .
-oc get cudnbgprouting cudn1 -o jsonpath='{.status.conditions}' | jq .
+oc get bgpcloudconfiguration cluster -o jsonpath='{.status.conditions}' | jq .
+oc get bgprouting cudn1 -o jsonpath='{.status.conditions}' | jq .
 ```
 
 ---
@@ -767,14 +767,14 @@ oc rollout restart deployment/openshift-cudn-bgp-routing-controller-manager -n o
    **For ROSA HCP:** provision AWS infrastructure first with [rosa-bgp Terraform](https://github.com/msemanrh/rosa-bgp), set up the IRSA IAM role (see [AWS authentication](#aws-authentication)), then create the CR with Route Server IDs and BGP ASN from `terraform output`. The operator auto-discovers all Route Server endpoints, neighbor IPs, and remote ASN:
 
    ```bash
-   $EDITOR config/samples/networking_v1alpha1_cudnbgpconfig.yaml # Add needed Terraform outputs
-   oc apply -f config/samples/networking_v1alpha1_cudnbgpconfig.yaml
+   $EDITOR config/samples/networking_v1beta1_bgpcloudconfiguration.yaml # Add needed Terraform outputs
+   oc apply -f config/samples/networking_v1beta1_bgpcloudconfiguration.yaml
    ```
 
-   **Without cloud integration:** create the CRs with your BGP router's ASN, neighbor addresses, and node selectors. Set `platform: Manual`, omit the `spec.aws` section and provide explicit `spec.bgp.peerGroups`. See the commented-out section in `config/samples/networking_v1alpha1_cudnbgpconfig.yaml` for an example:
+   **Without cloud integration:** create the CRs with your BGP router's ASN, neighbor addresses, and node selectors. Set `platform: Manual`, omit the `spec.aws` section and provide explicit `spec.bgp.peerGroups`. See the commented-out section in `config/samples/networking_v1beta1_bgpcloudconfiguration.yaml` for an example:
 
    ```bash
-   oc apply -f your-cudnbgpconfig.yaml    # platform: Manual, explicit peerGroups
+   oc apply -f your-bgpcloudconfiguration.yaml  # platform: Manual, explicit peerGroups
    ```
 
    Then create a labeled namespace:
@@ -793,14 +793,14 @@ EOF
    Finally apply the routing CR:
 
 ```bash
-oc apply -f config/samples/networking_v1alpha1_cudnbgprouting.yaml
+oc apply -f config/samples/networking_v1beta1_bgprouting.yaml
 ```
 
 6. Verify:
 
 ```bash
-oc get cudnbgpconfig cluster -o yaml   # phase: Ready
-oc get cudnbgprouting cudn1 -o yaml    # phase: Ready
+oc get bgpcloudconfiguration cluster -o yaml   # phase: Ready
+oc get bgprouting cudn1 -o yaml                # phase: Ready
 oc get frrconfiguration -n openshift-frr-k8s
 oc get clusteruserdefinednetwork
 oc get routeadvertisements
@@ -809,8 +809,8 @@ oc get routeadvertisements
 7. Clean up (delete CRs first so finalizers can clean up AWS resources and FRRConfigurations):
 
 ```bash
-oc delete cudnbgprouting --all
-oc delete cudnbgpconfig cluster
+oc delete bgprouting --all
+oc delete bgpcloudconfiguration cluster
 make undeploy
 ```
 
