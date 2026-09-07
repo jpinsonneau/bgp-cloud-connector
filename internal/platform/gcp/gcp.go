@@ -174,6 +174,7 @@ func (p *Platform) Cleanup(ctx context.Context) error {
 		platform.RecordCloudAPIError(platform.PlatformGCP, platform.OpPeer)
 		return fmt.Errorf("clearing Cloud Router peers: %w", err)
 	}
+	platform.SetCloudPeersManaged(platform.PlatformGCP, 0)
 	ids, err := p.ncc.ListSpokesByPrefix(ctx, p.cfg.NCCHubName, p.cfg.NCCSpokePrefix)
 	if err != nil {
 		platform.RecordCloudAPIError(platform.PlatformGCP, platform.OpNCC)
@@ -185,7 +186,6 @@ func (p *Platform) Cleanup(ctx context.Context) error {
 			return fmt.Errorf("deleting NCC spoke %q: %w", id, err)
 		}
 	}
-	platform.SetCloudPeersManaged(platform.PlatformGCP, 0)
 	return nil
 }
 
