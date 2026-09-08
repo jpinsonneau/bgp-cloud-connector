@@ -1288,7 +1288,7 @@ func testManagedPeer(endpointID, ip string) ec2types.RouteServerPeer {
 		RouteServerPeerId:     aws.String("peer-" + endpointID),
 		PeerAddress:           aws.String(ip),
 		Tags: []ec2types.Tag{
-			{Key: aws.String("managed-by"), Value: aws.String("cudn-bgp-routing-operator/test-cluster")},
+			{Key: aws.String("managed-by"), Value: aws.String("bgp-cloud-connector/test-cluster")},
 		},
 	}
 }
