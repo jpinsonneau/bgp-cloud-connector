@@ -30,7 +30,7 @@ import (
 
 // CUDNValidationError is returned when the Kubernetes API server rejects a CUDN
 // object as structurally invalid (e.g. bad CIDR in spec.network.layer2.subnets).
-// This is a terminal condition — the user must correct spec.network in the CUDNBgpRouting.
+// This is a terminal condition — the user must correct spec.network in the BGPRouting.
 type CUDNValidationError struct {
 	Cause error
 }

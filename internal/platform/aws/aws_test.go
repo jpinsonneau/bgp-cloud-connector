@@ -1154,7 +1154,7 @@ func TestReconcileNodes_ShrunkNodeListStillDeletes(t *testing.T) {
 // EC2 keeps returning a peer after it has been deleted, and refuses a delete on
 // one that is already deleting or deleted with IncorrectState. Cleanup runs on
 // the delete path, so an error there is not merely untidy: it propagates, the
-// finalizer is never released, and the CUDNBgpConfig stays terminating for
+// finalizer is never released, and the BGPCloudConfiguration stays terminating for
 // ever, retrying. Measured on a live cluster at over ten minutes, freed only
 // by removing the finalizer by hand.
 func TestCleanup_SkipsPeersAlreadyGoing(t *testing.T) {
