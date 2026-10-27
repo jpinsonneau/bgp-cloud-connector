@@ -183,6 +183,9 @@ func (r *BGPCloudConfigurationReconciler) reconcileReadyCloudResources(ctx conte
 	if err != nil {
 		return err
 	}
+	if _, err := cloudPlatform.DiscoverEndpoints(ctx); err != nil {
+		return fmt.Errorf("failed to discover cloud endpoints: %w", err)
+	}
 	routerNodes, _, err := r.listRouterNodes(ctx, config, true)
 	if err != nil {
 		return fmt.Errorf("failed to list router nodes: %w", err)
@@ -197,9 +200,8 @@ func readyCloudResourcesDue(config *networkingapi.BGPCloudConfiguration) bool {
 	if config.Spec.Platform == networkingapi.PlatformManual {
 		return false
 	}
-	condition := meta.FindStatusCondition(config.Status.Conditions, networkingapi.ConditionCloudResourcesReconciled)
-	return condition == nil || (!condition.LastTransitionTime.IsZero() &&
-		time.Since(condition.LastTransitionTime.Time) >= 5*time.Minute)
+	return config.Status.LastCloudReconcileTime == nil ||
+		time.Since(config.Status.LastCloudReconcileTime.Time) >= 5*time.Minute
 }
 
 //nolint:gocyclo // Reconcile intentionally coordinates the ordered controller phases and their status transitions.
@@ -237,7 +239,6 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		cloudReconciled := false
 		if readyCloudResourcesDue(config) {
 			if cloudErr := r.reconcileReadyCloudResources(ctx, config); cloudErr != nil {
 				message := fmt.Sprintf("failed to reconcile cloud resources: %v", cloudErr)
@@ -256,9 +257,13 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 				}
 				return ctrl.Result{}, cloudErr
 			}
-			cloudReconciled = true
+			now := metav1.Now()
+			config.Status.LastCloudReconcileTime = &now
+			if err := r.patchConfigStatus(ctx, config, *baselineStatus, func(c *networkingapi.BGPCloudConfiguration) {}); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
-		if observed && !cloudReconciled {
+		if observed {
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
@@ -452,6 +457,8 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 			return r.setDegraded(ctx, config, *baselineStatus, networkingapi.ConditionCloudResourcesReconciled,
 				ReasonCloudReconcileFailed, fmt.Sprintf("failed to reconcile cloud resources: %v", err))
 		}
+		now := metav1.Now()
+		config.Status.LastCloudReconcileTime = &now
 		if readyPhase {
 			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 				Type:               networkingapi.ConditionCloudResourcesReconciled,
