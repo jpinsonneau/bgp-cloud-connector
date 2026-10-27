@@ -193,6 +193,15 @@ func (r *BGPCloudConfigurationReconciler) reconcileReadyCloudResources(ctx conte
 	return nil
 }
 
+func readyCloudResourcesDue(config *networkingapi.BGPCloudConfiguration) bool {
+	if config.Spec.Platform == networkingapi.PlatformManual {
+		return false
+	}
+	condition := meta.FindStatusCondition(config.Status.Conditions, networkingapi.ConditionCloudResourcesReconciled)
+	return condition == nil || (!condition.LastTransitionTime.IsZero() &&
+		time.Since(condition.LastTransitionTime.Time) >= 5*time.Minute)
+}
+
 //nolint:gocyclo // Reconcile intentionally coordinates the ordered controller phases and their status transitions.
 func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -228,10 +237,28 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.reconcileReadyCloudResources(ctx, config); err != nil {
-			return ctrl.Result{}, err
+		cloudReconciled := false
+		if readyCloudResourcesDue(config) {
+			if cloudErr := r.reconcileReadyCloudResources(ctx, config); cloudErr != nil {
+				message := fmt.Sprintf("failed to reconcile cloud resources: %v", cloudErr)
+				if statusErr := r.patchConfigStatus(ctx, config, *baselineStatus, func(c *networkingapi.BGPCloudConfiguration) {
+					setSummaryConditions(&c.Status.Phase, &c.Status.Conditions, c.Generation,
+						networkingapi.PhaseDegraded, ReasonCloudReconcileFailed, message)
+					meta.SetStatusCondition(&c.Status.Conditions, metav1.Condition{
+						Type:               networkingapi.ConditionCloudResourcesReconciled,
+						Status:             metav1.ConditionFalse,
+						Reason:             ReasonCloudReconcileFailed,
+						Message:            message,
+						ObservedGeneration: c.Generation,
+					})
+				}); statusErr != nil {
+					return ctrl.Result{}, statusErr
+				}
+				return ctrl.Result{}, cloudErr
+			}
+			cloudReconciled = true
 		}
-		if observed {
+		if observed && !cloudReconciled {
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
@@ -299,6 +326,10 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 		})
 	} else {
 		incompleteMsg := formatIncompleteNodesMessage(incompleteNodes, cloudNodeMetadata)
+		prev := meta.FindStatusCondition(baselineStatus.Conditions, networkingapi.ConditionCompleteNodeInventory)
+		if prev == nil || prev.Status != metav1.ConditionFalse {
+			r.emitEvent(config, corev1.EventTypeWarning, ReasonNodesIncomplete, incompleteMsg)
+		}
 		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 			Type:               networkingapi.ConditionCompleteNodeInventory,
 			Status:             metav1.ConditionFalse,
@@ -417,32 +448,6 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 	// Phase 5: Reconcile cloud resources (if configured)
 	if cloudPlatform != nil {
 		log.Info("Phase 5: reconciling cloud resources")
-		incomplete := incompleteNodes
-		if readyPhase {
-			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-				Type:               networkingapi.ConditionCompleteNodeInventory,
-				Status:             metav1.ConditionTrue,
-				Reason:             ReasonNodesComplete,
-				Message:            fmt.Sprintf("all %d selected router nodes have the required metadata", len(routerNodes)),
-				ObservedGeneration: config.Generation,
-			})
-		} else {
-			incompleteMsg := formatIncompleteNodesMessage(incomplete, cloudNodeMetadata)
-			// Emit only on the transition into incomplete: the inventory is
-			// re-checked every 30s while it stays incomplete, and an event per
-			// pass would bury the one that matters.
-			prev := meta.FindStatusCondition(baselineStatus.Conditions, networkingapi.ConditionCompleteNodeInventory)
-			if prev == nil || prev.Status != metav1.ConditionFalse {
-				r.emitEvent(config, corev1.EventTypeWarning, ReasonNodesIncomplete, incompleteMsg)
-			}
-			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-				Type:               networkingapi.ConditionCompleteNodeInventory,
-				Status:             metav1.ConditionFalse,
-				Reason:             ReasonNodesIncomplete,
-				Message:            incompleteMsg,
-				ObservedGeneration: config.Generation,
-			})
-		}
 		if err := cloudPlatform.ReconcileNodes(ctx, routerNodes); err != nil {
 			return r.setDegraded(ctx, config, *baselineStatus, networkingapi.ConditionCloudResourcesReconciled,
 				ReasonCloudReconcileFailed, fmt.Sprintf("failed to reconcile cloud resources: %v", err))
@@ -725,8 +730,8 @@ func (r *BGPCloudConfigurationReconciler) listRouterNodes(ctx context.Context, c
 			}
 		}
 		if rn.PrivateIP == "" || (requireCloudMetadata && (rn.Zone == "" || rn.ProviderID == "")) {
-			logf.FromContext(ctx).Info("skipping node with incomplete info",
-				"node", node.Name, "ip", rn.PrivateIP, "zone", rn.Zone, "providerID", rn.ProviderID)
+			logf.FromContext(ctx).Info("skipping router node with incomplete metadata",
+				"hasInternalIP", rn.PrivateIP != "", "hasZone", rn.Zone != "", "hasProviderID", rn.ProviderID != "")
 			incomplete = append(incomplete, rn)
 			continue
 		}
