@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -102,6 +103,31 @@ func TestSetSummaryConditions_StableAcrossCalls(t *testing.T) {
 
 	if !first.Equal(&second) {
 		t.Errorf("LastTransitionTime changed on an unchanged condition: %v -> %v", first, second)
+	}
+}
+
+func TestDegradedCauseChanged(t *testing.T) {
+	degraded := []metav1.Condition{{
+		Type:   ConditionDegraded,
+		Status: metav1.ConditionTrue,
+		Reason: ReasonNamespaceNotReady,
+	}}
+
+	if !degradedCauseChanged(nil, ReasonNamespaceNotReady) {
+		t.Fatal("expected a first degraded condition to be a new cause")
+	}
+	if degradedCauseChanged(degraded, ReasonNamespaceNotReady) {
+		t.Fatal("expected a persistent degraded cause not to emit again")
+	}
+	if !degradedCauseChanged(degraded, ReasonCUDNFailed) {
+		t.Fatal("expected a changed degraded reason to emit")
+	}
+}
+
+func TestSanitizeEventMessage(t *testing.T) {
+	got := sanitizeEventMessage("bad\nmessage\x00")
+	if strings.ContainsAny(got, "\x00\n") {
+		t.Fatalf("event message contains control characters: %q", got)
 	}
 }
 

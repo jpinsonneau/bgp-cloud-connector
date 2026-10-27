@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -31,6 +32,19 @@ import (
 
 	networkingapi "github.com/openshift/bgp-cloud-connector/api/v1beta1"
 )
+
+// sanitizeEventMessage keeps controller-generated Events concise and prevents
+// control characters from being copied into an Event message from an error or
+// another user-controlled API field.
+func sanitizeEventMessage(message string) string {
+	message = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, message)
+	return truncateConditionMessage(message)
+}
 
 // setSummaryConditions assigns phase and derives the Available/Progressing/
 // Degraded summary conditions from it, so a caller sets both through one call
@@ -88,6 +102,14 @@ func setSummaryConditions(
 	for _, c := range []metav1.Condition{available, progressing, degraded} {
 		meta.SetStatusCondition(conds, c)
 	}
+}
+
+// degradedCauseChanged reports whether reason is a new degraded fault relative
+// to the status observed at the start of reconciliation. Requeues for the same
+// fault should update the existing Event count, not create an Event stream.
+func degradedCauseChanged(baseline []metav1.Condition, reason string) bool {
+	previous := meta.FindStatusCondition(baseline, ConditionDegraded)
+	return previous == nil || previous.Status != metav1.ConditionTrue || previous.Reason != reason
 }
 
 // configStatusEqual reports whether two Config status values are semantically equal.

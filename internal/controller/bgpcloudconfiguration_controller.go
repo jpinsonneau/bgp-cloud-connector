@@ -85,7 +85,7 @@ type BGPCloudConfigurationReconciler struct {
 // the 5-minute resync does not turn steady state into an event stream.
 func (r *BGPCloudConfigurationReconciler) emitEvent(config *networkingapi.BGPCloudConfiguration, eventType, reason, message string) {
 	if r.Recorder != nil {
-		r.Recorder.Event(config, eventType, reason, message)
+		r.Recorder.Event(config, eventType, reason, sanitizeEventMessage(message))
 	}
 }
 
@@ -837,9 +837,9 @@ func (r *BGPCloudConfigurationReconciler) setDegraded(
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
-	// Emit only when crossing into Degraded, so a fault that persists across
-	// requeues produces one event (aggregated by count) rather than a stream.
-	if baselineStatus.Phase != networkingapi.PhaseDegraded {
+	// Emit only when the fault is new: crossing into Degraded or changing the
+	// reason while Degraded. A persistent fault is aggregated by Event count.
+	if degradedCauseChanged(baselineStatus.Conditions, reason) {
 		r.emitEvent(config, corev1.EventTypeWarning, reason, message)
 	}
 	if terminal {

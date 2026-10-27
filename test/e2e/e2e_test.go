@@ -76,6 +76,12 @@ var _ = Describe("E2E", Ordered, func() {
 			By("applying BGPRouting CR")
 			routingCR := bgpRouting.DeepCopy()
 			routingCR.ResourceVersion = ""
+			By("verifying the complete namespace selector has no matches")
+			matched := &corev1.NamespaceList{}
+			selector := client.MatchingLabels{labelPrimaryUDN: "", labelClusterUDN: routingCR.Spec.Network.Name}
+			Expect(k8sClient.List(ctx, matched, selector)).To(Succeed())
+			Expect(matched.Items).To(BeEmpty(),
+				"the missing-namespace assertion requires no namespace to match the full selector")
 			Expect(k8sClient.Create(ctx, routingCR)).To(Succeed())
 
 			By("waiting for missing namespace validation and verifying its Warning Event")

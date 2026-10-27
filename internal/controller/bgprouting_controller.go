@@ -62,7 +62,7 @@ type BGPRoutingReconciler struct {
 // it do not panic. Callers emit only on transitions, not every reconcile.
 func (r *BGPRoutingReconciler) emitEvent(routing *networkingapi.BGPRouting, eventType, reason, message string) {
 	if r.Recorder != nil {
-		r.Recorder.Event(routing, eventType, reason, message)
+		r.Recorder.Event(routing, eventType, reason, sanitizeEventMessage(message))
 	}
 }
 
@@ -279,7 +279,7 @@ func (r *BGPRoutingReconciler) setDegraded(
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
-	if baselineStatus.Phase != networkingapi.PhaseDegraded {
+	if degradedCauseChanged(baselineStatus.Conditions, reason) {
 		r.emitEvent(routing, corev1.EventTypeWarning, reason, message)
 	}
 	if terminal {
