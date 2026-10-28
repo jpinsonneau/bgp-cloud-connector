@@ -24,6 +24,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -158,6 +159,64 @@ func TestRoutingReconcile_FullReconcile(t *testing.T) {
 	ra.SetGroupVersionKind(RouteAdvertisementsGVK)
 	if err := c.Get(context.Background(), types.NamespacedName{Name: RouteAdvertisementName}, ra); err != nil {
 		t.Fatalf("RouteAdvertisements not created: %v", err)
+	}
+}
+
+func TestRoutingReconcile_CUDNFailureMakesRoutingUnavailable(t *testing.T) {
+	routing := newTestBGPRouting()
+	routing.Finalizers = []string{RoutingFinalizerName}
+	config := newReadyBGPCloudConfiguration()
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   "app1",
+		Labels: map[string]string{LabelPrimaryUDN: "", LabelClusterUDN: "prod"},
+	}}
+
+	s := routingTestScheme()
+	c := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(routing, config, ns).
+		WithStatusSubresource(routing, config).
+		Build()
+	if err := EnsureClusterUDN(context.Background(), c, routing); err != nil {
+		t.Fatalf("ensure CUDN: %v", err)
+	}
+	cudn := &unstructured.Unstructured{}
+	cudn.SetGroupVersionKind(ClusterUDNGVK)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: ClusterUDNNamePrefix + "prod"}, cudn); err != nil {
+		t.Fatalf("get CUDN: %v", err)
+	}
+	if err := unstructured.SetNestedSlice(cudn.Object, []interface{}{
+		map[string]interface{}{
+			"type":    "NetworkCreated",
+			"status":  "False",
+			"reason":  "NetworkAttachmentDefinitionSyncError",
+			"message": "invalid primary network state for namespace app-partial",
+		},
+	}, "status", "conditions"); err != nil {
+		t.Fatalf("set CUDN status: %v", err)
+	}
+	if err := c.Update(context.Background(), cudn); err != nil {
+		t.Fatalf("update CUDN status: %v", err)
+	}
+
+	r := &BGPRoutingReconciler{Client: c, Scheme: s}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "prod"}}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	updated := &networkingapi.BGPRouting{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "prod"}, updated); err != nil {
+		t.Fatalf("get routing: %v", err)
+	}
+	if updated.Status.Phase != networkingapi.PhaseDegraded {
+		t.Fatalf("phase = %s, want Degraded", updated.Status.Phase)
+	}
+	assertSummary(t, updated.Status.Conditions, metav1.ConditionFalse, metav1.ConditionFalse, metav1.ConditionTrue)
+	condition := meta.FindStatusCondition(updated.Status.Conditions, networkingapi.ConditionNetworkCreated)
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != ReasonCUDNFailed {
+		t.Fatalf("NetworkCreated condition = %#v, want False/%s", condition, ReasonCUDNFailed)
+	}
+	if !strings.Contains(condition.Message, "NetworkAttachmentDefinitionSyncError") {
+		t.Errorf("NetworkCreated message = %q, want CUDN failure reason", condition.Message)
 	}
 }
 

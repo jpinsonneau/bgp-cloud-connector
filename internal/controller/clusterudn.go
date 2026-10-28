@@ -104,6 +104,57 @@ func EnsureClusterUDN(ctx context.Context, c client.Client, routing *networkinga
 	return createOrUpdateCUDN(ctx, c, obj)
 }
 
+// clusterUDNNetworkCreated reports the observed NetworkCreated condition. The
+// condition is optional immediately after a CUDN is created; in that case the
+// caller keeps the existing optimistic status until OVN publishes its first
+// observation. Once present, any status other than True means the CUDN is not
+// serving the requested network.
+func clusterUDNNetworkCreated(ctx context.Context, c client.Client, networkName string) (observed, ready bool, message string, err error) {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(ClusterUDNGVK)
+	if err := c.Get(ctx, client.ObjectKey{Name: ClusterUDNNamePrefix + networkName}, obj); err != nil {
+		return false, false, "", err
+	}
+
+	conditions, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if err != nil {
+		return false, false, "", fmt.Errorf("reading ClusterUDN %q conditions: %w", obj.GetName(), err)
+	}
+	if !found {
+		return false, false, "", nil
+	}
+	for _, raw := range conditions {
+		condition, ok := raw.(map[string]interface{})
+		if !ok {
+			return false, false, "", fmt.Errorf("reading ClusterUDN %q conditions: expected an object", obj.GetName())
+		}
+		typeName, _, err := unstructured.NestedString(condition, "type")
+		if err != nil {
+			return false, false, "", fmt.Errorf("reading ClusterUDN %q condition type: %w", obj.GetName(), err)
+		}
+		if typeName != "NetworkCreated" {
+			continue
+		}
+		status, _, err := unstructured.NestedString(condition, "status")
+		if err != nil {
+			return false, false, "", fmt.Errorf("reading ClusterUDN %q NetworkCreated status: %w", obj.GetName(), err)
+		}
+		reason, _, err := unstructured.NestedString(condition, "reason")
+		if err != nil {
+			return false, false, "", fmt.Errorf("reading ClusterUDN %q NetworkCreated reason: %w", obj.GetName(), err)
+		}
+		conditionMessage, _, err := unstructured.NestedString(condition, "message")
+		if err != nil {
+			return false, false, "", fmt.Errorf("reading ClusterUDN %q NetworkCreated message: %w", obj.GetName(), err)
+		}
+		if status == "True" {
+			return true, true, "", nil
+		}
+		return true, false, fmt.Sprintf("condition is %s (%s): %s", status, reason, conditionMessage), nil
+	}
+	return false, false, "", nil
+}
+
 func createOrUpdateCUDN(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
 	err := createOrUpdate(ctx, c, obj, nil)
 	if err != nil && apierrors.IsInvalid(err) {

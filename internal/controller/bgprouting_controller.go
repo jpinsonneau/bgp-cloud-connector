@@ -150,6 +150,14 @@ func (r *BGPRoutingReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.setDegraded(ctx, routing, *baselineStatus, networkingapi.ConditionNetworkCreated,
 			ReasonCUDNFailed, fmt.Sprintf("failed to ensure ClusterUDN: %v", err))
 	}
+	if observed, ready, message, err := clusterUDNNetworkCreated(ctx, r.Client, routing.Spec.Network.Name); err != nil {
+		return r.setDegraded(ctx, routing, *baselineStatus, networkingapi.ConditionNetworkCreated,
+			ReasonCUDNFailed, fmt.Sprintf("failed to read ClusterUDN status: %v", err))
+	} else if observed && !ready {
+		return r.setDegraded(ctx, routing, *baselineStatus, networkingapi.ConditionNetworkCreated,
+			ReasonCUDNFailed, fmt.Sprintf("ClusterUDN %q is not ready: %s",
+				ClusterUDNNamePrefix+routing.Spec.Network.Name, message))
+	}
 	meta.SetStatusCondition(&routing.Status.Conditions, metav1.Condition{
 		Type:   networkingapi.ConditionNetworkCreated,
 		Status: metav1.ConditionTrue,
