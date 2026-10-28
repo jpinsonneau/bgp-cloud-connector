@@ -340,6 +340,9 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 
 	// Phase 5: Reconcile cloud resources (if configured)
 	readyPhase := true
+	// Defer this transition Event until the status write succeeds. If the write
+	// conflicts, the next pass must be allowed to retry the transition once.
+	incompleteEvent := ""
 	if cloudPlatform != nil {
 		log.Info("Phase 5: reconciling cloud resources")
 		nodes, incomplete, err := r.listRouterNodes(ctx, config)
@@ -358,12 +361,9 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 			})
 		} else {
 			incompleteMsg := formatIncompleteNodesMessage(incomplete)
-			// Emit only on the transition into incomplete: the inventory is
-			// re-checked every 30s while it stays incomplete, and an event per
-			// pass would bury the one that matters.
 			prev := meta.FindStatusCondition(baselineStatus.Conditions, networkingapi.ConditionCompleteNodeInventory)
 			if prev == nil || prev.Status != metav1.ConditionFalse {
-				r.emitEvent(config, corev1.EventTypeWarning, ReasonNodesIncomplete, incompleteMsg)
+				incompleteEvent = incompleteMsg
 			}
 			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 				Type:               networkingapi.ConditionCompleteNodeInventory,
@@ -374,8 +374,9 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 			})
 		}
 		if err := cloudPlatform.ReconcileNodes(ctx, nodes); err != nil {
-			return r.setDegraded(ctx, config, *baselineStatus, networkingapi.ConditionCloudResourcesReconciled,
+			res, err := r.setDegraded(ctx, config, *baselineStatus, networkingapi.ConditionCloudResourcesReconciled,
 				ReasonCloudReconcileFailed, fmt.Sprintf("failed to reconcile cloud resources: %v", err))
+			return r.emitIncompleteIfWritten(config, incompleteEvent, res, err)
 		}
 		if readyPhase {
 			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
@@ -396,7 +397,22 @@ func (r *BGPCloudConfigurationReconciler) Reconcile(ctx context.Context, req ctr
 		}
 	}
 
-	return r.completeReconcile(ctx, config, *baselineStatus, readyPhase)
+	res, err := r.completeReconcile(ctx, config, *baselineStatus, readyPhase)
+	return r.emitIncompleteIfWritten(config, incompleteEvent, res, err)
+}
+
+// emitIncompleteIfWritten emits the deferred inventory warning only after the
+// status write that records the transition has succeeded.
+func (r *BGPCloudConfigurationReconciler) emitIncompleteIfWritten(
+	config *networkingapi.BGPCloudConfiguration,
+	message string,
+	res ctrl.Result,
+	err error,
+) (ctrl.Result, error) {
+	if err == nil && message != "" {
+		r.emitEvent(config, corev1.EventTypeWarning, ReasonNodesIncomplete, message)
+	}
+	return res, err
 }
 
 func (r *BGPCloudConfigurationReconciler) completeReconcile(
